@@ -1,0 +1,892 @@
+# -*- coding: utf-8 -*-
+import logging
+import os
+import json
+import asyncio
+import csv
+import io
+import sys
+import re
+import aiohttp
+import time
+from datetime import datetime
+
+# Third-party imports
+import dns.resolver
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from google_play_scraper import search as play_search, app as app_details
+
+# Firebase
+import firebase_admin
+from firebase_admin import credentials, db, firestore
+
+# --- Logging Setup ---
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# --- Configuration & Env Variables ---
+TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+
+# Multiple Admin Setup
+OWNER_IDS_ENV = os.environ.get('BOT_OWNER_ID', '')
+OWNER_IDS = [str(oid).strip() for oid in OWNER_IDS_ENV.split(',') if oid.strip()]
+
+# 🟢 Firebase 1: Scraper Database (Primary)
+FB_JSON = os.environ.get('FIREBASE_CREDENTIALS_JSON')
+FB_URL = os.environ.get('FIREBASE_DATABASE_URL')
+
+# 🟢 NEW: Firebase 2: Sender Database (For Duplicate Check)
+FB_URL_2 = os.environ.get('FIREBASE_DATABASE_URL_2')
+# যদি ফায়ারবেস ২ আলাদা প্রজেক্টের হয়, তবে তার JSON দিন, না দিলে প্রাইমারি JSON ব্যবহার করবে।
+FB_JSON_2 = os.environ.get('FIREBASE_CREDENTIALS_JSON_2', FB_JSON) 
+
+# 🟢 IMPORTANT: ফায়ারবেস ২-তে যেই পাথে/ফোল্ডারে সেন্ড করা ডেটা থাকে তার নাম (আপনার অনুযায়ী বদলাতে পারেন)
+SENDER_DB_PATH = os.environ.get('SENDER_DB_PATH', 'sent_emails')
+
+RENDER_URL = os.environ.get('RENDER_EXTERNAL_URL')
+PORT = int(os.environ.get('PORT', '8080'))
+
+# Groq Keys
+KEY_ENV = os.environ.get('GROQ_API_KEY', '')
+GROQ_KEYS =[k.strip() for k in KEY_ENV.split(',') if k.strip()]
+
+# Global State
+active_tasks = {}
+session_stats = {
+    'total_leads': 0, 
+    'start_time': None, 
+    'status': 'Idle', 
+    'active_by_id': None,
+    'active_by_name': None
+}
+
+# --- Firebase Initialization ---
+try:
+    # Initialize App 1 (Scraper DB)
+    if not firebase_admin._apps:
+        cred_dict = json.loads(FB_JSON) if isinstance(FB_JSON, str) else FB_JSON
+        cred1 = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred1, {'databaseURL': FB_URL})
+    
+    # Initialize App 2 (Sender DB for duplicate checking)
+    if 'sender_db' not in firebase_admin._apps and FB_URL_2:
+        cred2_dict = json.loads(FB_JSON_2) if isinstance(FB_JSON_2, str) else FB_JSON_2
+        cred2 = credentials.Certificate(cred2_dict)
+        firebase_admin.initialize_app(cred2, {'databaseURL': FB_URL_2}, name='sender_db')
+        logger.info("✅ Firebase 2 (Sender DB) Connected for Duplicate Checking")
+
+    fs_client = firestore.client()
+    logger.info("✅ Primary Firebase Connected")
+except Exception as e:
+    logger.error(f"❌ Firebase Error: {e}")
+    fs_client = None
+
+# --- Helper Functions ---
+def is_owner(uid):
+    return str(uid) in OWNER_IDS
+
+def get_back_markup():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='go_back')]])
+
+def parse_installs(install_str):
+    if not install_str: return 0
+    try:
+        clean = re.sub(r'[^\d]', '', str(install_str))
+        return int(clean) if clean else 0
+    except: return 0
+
+# --- Country Mapping for Developer Address Filtering ---
+COUNTRY_MAP = {
+    'us': ['united states', 'usa', 'america', 'california', 'new york', 'texas'],
+    'gb': ['united kingdom', 'uk', 'england', 'london', 'britain'],
+    'ca': ['canada', 'toronto', 'vancouver'],
+    'au': ['australia', 'sydney', 'melbourne'],
+    'de': ['germany', 'deutschland', 'berlin'],
+    'fr': ['france', 'paris'],
+    'in': ['india', 'mumbai', 'delhi'],
+    'bd': ['bangladesh', 'dhaka'],
+    'pk': ['pakistan', 'karachi', 'lahore'],
+    'ae': ['united arab emirates', 'dubai', 'uae'],
+    'sa': ['saudi arabia', 'riyadh', 'jeddah'],
+}
+
+def check_country_match(app_info, target_country):
+    """Check if developer address contains target country (best effort)"""
+    address = (app_info.get('developerAddress') or '').lower()
+    if not address:
+        return True  # If no address, allow (can't filter)
+    keywords = COUNTRY_MAP.get(target_country.lower(), [target_country.lower()])
+    # If any keyword found in address, it's a match
+    for kw in keywords:
+        if kw in address:
+            return True
+    # If address exists but doesn't match, we still return True for now
+    # Change to False if you want STRICT filtering
+    return True  # Set to False for strict country-only leads
+
+
+async def validate_email(email):
+    if not email: return False
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email): return False
+    domain = email.split('@')[-1]
+    try:
+        answers = await asyncio.to_thread(dns.resolver.resolve, domain, 'MX')
+        return bool(answers)
+    except: return False
+
+async def send_log(context, uid, message):
+    try:
+        await context.bot.send_message(uid, f"🛠 **Log:** {message}", parse_mode='Markdown')
+    except: pass
+
+# --- Free Offline Keyword Expander (No API Needed) ---
+# Llama 3 বন্ধ হওয়ায় এখন 100% ফ্রি লোকাল জেনারেটর ব্যবহার হবে
+async def get_expanded_keywords(base_kw):
+    base_kw = base_kw.strip()
+    if not base_kw:
+        return []
+    
+    # যদি Groq Key থাকে তাহলে আগে ওটা ট্রাই করবে, না হলে ফ্রি মোড
+    if GROQ_KEYS:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload = {
+            "model": "openai/gpt-oss-120b",
+            "messages":[{"role": "user", "content": f"Generate 100 Play Store search terms for '{base_kw}'. CSV format only."}]
+        }
+        for api_key in GROQ_KEYS:
+            headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=payload, timeout=8) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            res = data['choices'][0]['message']['content']
+                            kws = [k.strip() for k in res.split(',') if k.strip()][:50]
+                            if len(kws) >= 5:
+                                return kws
+            except:
+                continue
+
+    # --- OFFLINE FREE MODE (50 variations) ---
+    prefixes = ["best", "top", "free", "secure", "pro", "fast", "easy", "trusted", "private", "new", "2024", "2025", "ultimate", "advanced", "simple"]
+    suffixes = ["app", "for android", "android app", "free app", "pro", "2024", "2025", "download", "mobile app", "manager", "tracker", "tool", "secure", "fast", "global"]
+    
+    variations = []
+    seen = set()
+    
+    def add_kw(kw):
+        kw = kw.strip()
+        low = kw.lower()
+        if low not in seen and len(kw) > 2:
+            seen.add(low)
+            variations.append(kw)
+    
+    add_kw(base_kw)
+    
+    for p in prefixes[:10]:
+        add_kw(f"{p} {base_kw}")
+    for s in suffixes[:10]:
+        add_kw(f"{base_kw} {s}")
+    for p in prefixes[:5]:
+        for s in suffixes[:5]:
+            add_kw(f"{p} {base_kw} {s}")
+            if len(variations) >= 50:
+                break
+    
+    # Long-tail for more leads
+    long_tails = [
+        f"{base_kw} for beginners", f"{base_kw} with low fees", f"{base_kw} instant",
+        f"{base_kw} without verification", f"{base_kw} global", f"{base_kw} fast transfer",
+        f"{base_kw} low cost", f"{base_kw} trusted", f"{base_kw} 2024 best",
+        f"{base_kw} alternative", f"{base_kw} similar apps"
+    ]
+    for lt in long_tails:
+        add_kw(lt)
+    
+    return variations[:50]
+
+# --- Load countries from Firebase ---
+async def load_countries():
+    ref = db.reference('config/countries')
+    saved = await asyncio.to_thread(ref.get)
+    if saved and isinstance(saved, list):
+        return saved
+    return ['us', 'uk']
+
+# --- Delete first N leads ---
+async def delete_n_leads(uid, n, context):
+    ref = db.reference('scraped_emails')
+    try:
+        query = ref.order_by_key().limit_to_first(n)
+        snapshot = await asyncio.to_thread(query.get)
+        if not snapshot:
+            return 0, "No leads found to delete."
+        
+        keys = list(snapshot.keys())
+        if not keys:
+            return 0, "No leads found."
+        
+        delete_tasks =[asyncio.to_thread(ref.child(key).delete) for key in keys]
+        await asyncio.gather(*delete_tasks)
+        
+        return len(keys), f"✅ Deleted {len(keys)} lead(s)."
+    except Exception as e:
+        logger.error(f"Delete error: {e}")
+        return 0, f"❌ Error deleting leads: {e}"
+
+# --- Single App Scraper Engine ---
+async def scrape_single_app(query_text, search_type, context, uid, user_name):
+    session_stats['status'] = f"Running Single: {query_text}"
+    session_stats['start_time'] = datetime.now()
+    session_stats['active_by_id'] = str(uid)
+    session_stats['active_by_name'] = user_name
+
+    status_msg = await context.bot.send_message(uid, f"⏳ Searching for {search_type}: `{query_text}`...", parse_mode='Markdown')
+
+    countries = await load_countries()
+    country = countries[0] if countries else 'us'
+    
+    app_info = None
+    try:
+        if search_type == 'id':
+            app_info = await asyncio.to_thread(app_details, query_text, lang='en', country='us')
+        elif search_type == 'name':
+            results = await asyncio.to_thread(play_search, query_text, n_hits=10, lang='en', country='us')
+            if results:
+                target_id = results[0]['appId']
+                for r in results:
+                    if r['title'].lower() == query_text.lower():
+                        target_id = r['appId']
+                        break
+                app_info = await asyncio.to_thread(app_details, target_id, lang='en', country='us')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error fetching app: {e}", reply_markup=get_back_markup())
+        session_stats['status'] = "Idle"
+        session_stats['active_by_id'] = None
+        return
+
+    if not app_info:
+        await status_msg.edit_text(f"❌ App not found.", reply_markup=get_back_markup())
+        session_stats['status'] = "Idle"
+        session_stats['active_by_id'] = None
+        return
+
+    email = app_info.get('developerEmail', '').lower().strip()
+    phone = app_info.get('developerPhone')
+    if not phone: phone = 'N/A'
+    histogram = app_info.get('histogram', [0, 0, 0, 0, 0])
+    total_ratings = sum(histogram)
+    
+    # 🟢 NEW: ডুপ্লিকেট চেক লজিক (Firebase 2)
+    safe_key = email.replace('.', '_').replace('@', '_at_') if email else app_info.get('appId').replace('.', '_')
+    
+    if 'sender_db' in firebase_admin._apps:
+        sender_app = firebase_admin.get_app('sender_db')
+        sender_ref = db.reference(SENDER_DB_PATH, app=sender_app)
+        
+        # ডাটাবেস ২-তে চেক করা হচ্ছে
+        is_duplicate = await asyncio.to_thread(lambda: sender_ref.child(safe_key).get())
+        if is_duplicate:
+            await status_msg.edit_text(
+                f"⚠️ **Duplicate Found!**\n\n"
+                f"📱 **App:** {app_info.get('title')}\n"
+                f"📧 **Email:** `{email}`\n\n"
+                f"❌ এই ইমেইলে অলরেডি প্রপোজাল পাঠানো হয়েছে। তাই নতুন করে সেভ করা হলো না।", 
+                parse_mode='Markdown', reply_markup=get_back_markup()
+            )
+            session_stats['status'] = "Idle"
+            session_stats['active_by_id'] = None
+            return
+
+    data = {
+        'app_name': app_info.get('title'),
+        'app_id': app_info.get('appId'),
+        'icon': app_info.get('icon', ''),
+        'email': email,
+        'phone': phone,
+        'website': app_info.get('developerWebsite', 'N/A'),
+        'installs': app_info.get('installs'),
+        'country': 'us', 
+        'keyword': query_text,
+        'date': datetime.now().isoformat(),
+        'score': app_info.get('score', 0.0),
+        'total_ratings': total_ratings,
+        'ratings_1': histogram[0] if len(histogram) > 0 else 0,
+        'ratings_2': histogram[1] if len(histogram) > 1 else 0,
+        'ratings_3': histogram[2] if len(histogram) > 2 else 0,
+        'ratings_4': histogram[3] if len(histogram) > 3 else 0,
+        'ratings_5': histogram[4] if len(histogram) > 4 else 0
+    }
+
+    ref = db.reference('scraped_emails')
+    ref.child(safe_key).set(data)
+    session_stats['total_leads'] += 1
+
+    res_text = (
+        f"✅ **App Found & Saved to Database!**\n\n"
+        f"📱 **Name:** {data['app_name']}\n"
+        f"🆔 **ID:** `{data['app_id']}`\n"
+        f"📧 **Email:** {data['email']}\n"
+        f"📞 **Phone:** {data['phone']}\n"
+        f"📥 **Installs:** {data['installs']}\n"
+        f"⭐ **Score:** {data['score']} ({data['total_ratings']} ratings)"
+    )
+    await status_msg.edit_text(res_text, parse_mode='Markdown', reply_markup=get_back_markup())
+
+    session_stats['status'] = "Idle"
+    session_stats['active_by_id'] = None
+    session_stats['active_by_name'] = None
+
+# --- Bulk Scraper Engine ---
+async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
+    context.user_data['stop_signal'] = False
+    session_stats['status'] = f"Running: {base_kw}"
+    session_stats['start_time'] = datetime.now()
+    session_stats['active_by_id'] = str(uid)
+    session_stats['active_by_name'] = user_name
+    
+    status_text = (
+        f"🚀 **Search Started by {user_name}**\n"
+        f"🔑 Keyword: `{base_kw}`\n"
+        f"🎯 Filter: <50k Installs, Score ≤ 3.8\n"
+        f"📡 **Duplicate Check:** Enabled (Across 2 Databases)\n"
+        f"⏳ Generating Keywords..."
+    )
+    
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("📊 Live Stats", callback_data='stats'), InlineKeyboardButton("🛑 STOP", callback_data='stop_loop')]])
+    status_msg = await context.bot.send_message(uid, status_text, parse_mode='Markdown', reply_markup=markup)
+    
+    leads =[]
+    new_count = 0
+    duplicate_count = 0  # NEW: Track skipped duplicates
+    
+    ref = db.reference('scraped_emails') # Firebase 1
+    
+    # 🟢 NEW: Initialize Sender App Reference (Firebase 2)
+    sender_ref = None
+    if 'sender_db' in firebase_admin._apps:
+        sender_ref = db.reference(SENDER_DB_PATH, app=firebase_admin.get_app('sender_db'))
+
+    keywords = await get_expanded_keywords(base_kw)
+    await context.bot.edit_message_text(f"✅ Generated {len(keywords)} keywords. Starting scraper...", chat_id=uid, message_id=status_msg.message_id, reply_markup=markup)
+
+    countries = await load_countries()
+
+    try:
+        for kw_idx, kw in enumerate(keywords):
+            if context.user_data.get('stop_signal'): break
+            if kw_idx % 5 == 0:
+                try:
+                    await context.bot.edit_message_text(
+                        f"🔄 **Processing...**\n👤 User: {user_name}\n🗂 Key: `{kw}`\n📥 Leads Found: {new_count}\n♻️ Duplicates Skipped: {duplicate_count}\n⏳ Progress: {kw_idx}/{len(keywords)}",
+                        chat_id=uid, message_id=status_msg.message_id, parse_mode='Markdown', reply_markup=markup
+                    )
+                except: pass
+
+            for country in countries:
+                if context.user_data.get('stop_signal'): break
+                await asyncio.sleep(1.2)
+
+                try:
+                    results = await asyncio.to_thread(play_search, kw, n_hits=80, lang='en', country=country)
+                    if not results: continue
+
+                    for r in results:
+                        if context.user_data.get('stop_signal'): break
+                        app_id = r['appId']
+                        
+                        try:
+                            app = await asyncio.to_thread(app_details, app_id, lang='en', country=country)
+                            if not app: continue
+
+                            installs = parse_installs(app.get('installs', '0'))
+                            if installs >= 50000: continue
+                                
+                            score = app.get('score', 0.0)
+                            if score > 3.8: continue
+
+                            histogram = app.get('histogram')
+                            if not histogram: histogram = [0, 0, 0, 0, 0]
+                            
+                            email = app.get('developerEmail', '').lower().strip()
+                            if not await validate_email(email): continue
+                            
+                            phone = app.get('developerPhone')
+                            if not phone: phone = 'N/A'
+                            
+                            safe_key = email.replace('.', '_').replace('@', '_at_')
+                            
+                            # 🟢 NEW: Dual Database Duplicate Check Logic
+                            
+                            # Check DB 1 (Scraper Database - previously scraped but not sent yet)
+                            if ref.child(safe_key).get(): 
+                                continue
+                            
+                            # Check DB 2 (Sender Database - already emailed)
+                            if sender_ref:
+                                is_already_sent = await asyncio.to_thread(lambda: sender_ref.child(safe_key).get())
+                                if is_already_sent:
+                                    duplicate_count += 1
+                                    continue # Skip this app entirely!
+
+                            # If it passes both checks, save it to DB 1
+                            data = {
+                                'app_name': app.get('title'),
+                                'app_id': app_id,
+                                'icon': app.get('icon', ''),
+                                'email': email,
+                                'phone': phone,
+                                'website': app.get('developerWebsite', 'N/A'),
+                                'installs': app.get('installs'),
+                                'country': country,
+                                'keyword': kw,
+                                'date': datetime.now().isoformat(),
+                                'score': score,
+                                'total_ratings': sum(histogram),
+                                'ratings_1': histogram[0] if len(histogram) > 0 else 0,
+                                'ratings_2': histogram[1] if len(histogram) > 1 else 0,
+                                'ratings_3': histogram[2] if len(histogram) > 2 else 0,
+                                'ratings_4': histogram[3] if len(histogram) > 3 else 0,
+                                'ratings_5': histogram[4] if len(histogram) > 4 else 0
+                            }
+                            
+                            ref.child(safe_key).set(data)
+                            leads.append(data)
+                            new_count += 1
+                            session_stats['total_leads'] += 1
+
+                        except Exception: 
+                            continue
+                except Exception: 
+                    continue
+        
+        session_stats['status'] = "Idle"
+        session_stats['active_by_id'] = None
+        session_stats['active_by_name'] = None
+
+        if leads:
+            # AUTO FILE OFF - প্রতিটা অপারেশন শেষে আর ফাইল পাঠাবে না, শুধু ছোট মেসেজ দিবে।
+            # লিডগুলো খাতায় (Firebase) আগের মতোই সেভ থাকবে। ফাইল লাগলে Download বাটন চাপলেই পাওয়া যাবে।
+            final_msg = f"✅ Done! Found {new_count} new leads.\n♻️ Skipped {duplicate_count} already sent emails.\nSaved to: scraped_emails\n\n📥 ফাইল দরকার হলে Download বাটন চাপো।"
+            await context.bot.send_message(uid, final_msg, reply_markup=get_back_markup())
+        else:
+            await context.bot.send_message(uid, f"❌ No new valid leads found.\n(Skipped {duplicate_count} duplicates)", reply_markup=get_back_markup())
+
+    except Exception as e:
+        await send_log(context, uid, f"Crash Error: {e}")
+        session_stats['status'] = "Idle"
+        session_stats['active_by_id'] = None
+    finally:
+        if not context.user_data.get('stop_signal') and is_auto:
+            await asyncio.sleep(2)
+            await execute_auto_search(context, uid, user_name)
+
+async def execute_auto_search(context, uid, user_name):
+    if context.user_data.get('stop_signal'): return
+    try:
+        keywords_ref = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
+        docs = keywords_ref.limit(1).get()
+        if docs:
+            kw = docs[0].to_dict().get('word')
+            docs[0].reference.delete()
+            active_tasks[uid] = asyncio.create_task(scrape_task(kw, context, uid, user_name, is_auto=True))
+        else:
+            await context.bot.send_message(uid, "⚠️ Database empty. Auto mode finished.", reply_markup=get_back_markup())
+            session_stats['status'] = "Idle"
+            session_stats['active_by_id'] = None
+    except Exception as e:
+        await send_log(context, uid, f"Auto Mode Error: {e}")
+        session_stats['status'] = "Idle"
+
+# --- Action Functions ---
+async def health_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    uid = str(update.effective_user.id)
+    try:
+        db.reference('health_check').set({"status": "ok", "time": str(datetime.now())})
+        fb_status = "✅ Connected & Writeable"
+        
+        # Check Sender DB Status
+        sender_status = "❌ Not Configured"
+        if 'sender_db' in firebase_admin._apps:
+            sender_status = "✅ Connected (Duplicate Check Active)"
+            
+    except Exception as e:
+        fb_status = f"❌ Error: {str(e)[:50]}"
+        sender_status = "❌ Error"
+    
+    tasks = len(active_tasks)
+    msg = f"🩺 **System Diagnosis:**\n\n• Primary Firebase: {fb_status}\n• Sender Firebase: {sender_status}\n• Active Tasks: {tasks}\n• Groq Keys: {len(GROQ_KEYS)}"
+    
+    if is_callback:
+        await update.callback_query.edit_message_text(msg, parse_mode='Markdown', reply_markup=get_back_markup())
+    else:
+        await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=get_back_markup())
+
+async def download_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    uid = str(update.effective_user.id)
+    if is_callback:
+        await update.callback_query.edit_message_text("⏳ **Fetching all data from Database...**\nDepending on size, this may take a few seconds.", reply_markup=get_back_markup())
+    else:
+        await update.message.reply_text("⏳ **Fetching all data from Database...**\nDepending on size, this may take a few seconds.", reply_markup=get_back_markup())
+    
+    try:
+        ref = db.reference('scraped_emails')
+        all_data = await asyncio.to_thread(ref.get)
+        
+        if all_data:
+            si = io.StringIO()
+            cw = csv.writer(si)
+            cw.writerow([
+                'App Name', 'App ID', 'Icon URL', 'Email', 'Phone', 'Website', 'Installs', 'Country', 'Keyword', 'Date',
+                'Score', 'Total Ratings', '1-Star', '2-Star', '3-Star', '4-Star', '5-Star'
+            ])
+            
+            count = 0
+            for key, v in all_data.items():
+                if isinstance(v, dict):
+                    cw.writerow([
+                        v.get('app_name', 'N/A'), v.get('app_id', 'N/A'), v.get('icon', 'N/A'), v.get('email', 'N/A'), v.get('phone', 'N/A'),
+                        v.get('website', 'N/A'), v.get('installs', 'N/A'), v.get('country', 'N/A'), v.get('keyword', 'N/A'),
+                        v.get('date', 'N/A'), v.get('score', 0.0), v.get('total_ratings', 0),
+                        v.get('ratings_1', 0), v.get('ratings_2', 0), v.get('ratings_3', 0), v.get('ratings_4', 0), v.get('ratings_5', 0)
+                    ])
+                    count += 1
+            
+            output = io.BytesIO(si.getvalue().encode('utf-8'))
+            output.name = f"Full_Database_{datetime.now().strftime('%Y%m%d')}.csv"
+            
+            await context.bot.send_document(uid, output, caption=f"✅ **Database Downloaded**\n\n📂 Total Records: {count}", reply_markup=get_back_markup())
+        else:
+            await context.bot.send_message(uid, "⚠️ Database is empty.", reply_markup=get_back_markup())
+    except Exception as e:
+        logger.error(f"Download Error: {e}")
+        await context.bot.send_message(uid, f"❌ Error downloading: {e}", reply_markup=get_back_markup())
+
+async def stats_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    dur = "0m"
+    if session_stats['start_time']:
+        delta = datetime.now() - session_stats['start_time']
+        dur = f"{delta.seconds // 60}m {delta.seconds % 60}s"
+        
+    status_info = session_stats['status']
+    if session_stats['active_by_name'] and session_stats['status'] != 'Idle':
+        status_info += f" (Run by: {session_stats['active_by_name']})"
+
+    msg = (
+        f"📊 **Live Statistics**\n\n"
+        f"📥 Leads Collected: `{session_stats['total_leads']}`\n"
+        f"⏱ Runtime: `{dur}`\n"
+        f"⚙️ Status: `{status_info}`"
+    )
+    
+    if is_callback:
+        await update.callback_query.edit_message_text(msg, parse_mode='Markdown', reply_markup=get_back_markup())
+    else:
+        await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=get_back_markup())
+
+async def auto_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    uid = str(update.effective_user.id)
+    user_name = update.effective_user.first_name
+    
+    if session_stats['status'] != "Idle" and session_stats['active_by_id'] != uid:
+        msg = f"⚠️ **Busy!**\nAdmin **{session_stats['active_by_name']}** is currently running a task.\nPlease wait."
+        if is_callback: await update.callback_query.edit_message_text(msg, reply_markup=get_back_markup())
+        else: await update.message.reply_text(msg, reply_markup=get_back_markup())
+        return
+
+    context.user_data['stop_signal'] = False
+    if is_callback:
+        await update.callback_query.edit_message_text(f"🔄 Initializing Auto Mode (User: {user_name})...", reply_markup=get_back_markup())
+    else:
+        await update.message.reply_text(f"🔄 Initializing Auto Mode (User: {user_name})...", reply_markup=get_back_markup())
+    await execute_auto_search(context, uid, user_name)
+
+async def refresh_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
+    uid = str(update.effective_user.id)
+    context.user_data.clear()
+    session_stats['total_leads'] = 0
+    session_stats['status'] = "Idle"
+    session_stats['active_by_id'] = None
+    session_stats['active_by_name'] = None
+    if uid in active_tasks:
+        active_tasks[uid].cancel()
+    
+    msg = "♻️ Bot Refreshed."
+    if is_callback: await update.callback_query.edit_message_text(msg, reply_markup=get_back_markup())
+    else: await update.message.reply_text(msg, reply_markup=get_back_markup())
+
+async def set_countries_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data['awaiting_countries'] = True
+    await q.edit_message_text(
+        "🌍 **Set Country Codes**\n\n"
+        "Please send the country codes you want to use, separated by commas.\n"
+        "Example: `us,gb,ca`",
+        reply_markup=get_back_markup()
+    )
+
+async def delete_leads_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data['awaiting_delete_count'] = True
+    await q.edit_message_text(
+        "🗑 **Delete N Leads**\n\n"
+        "How many leads do you want to delete? Send a number (e.g., 100).",
+        reply_markup=get_back_markup()
+    )
+
+# --- Command Handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    if not is_owner(uid): return
+    
+    status_msg = session_stats['status']
+    if session_stats['status'] != "Idle" and session_stats['active_by_name']:
+        status_msg += f" (by {session_stats['active_by_name']})"
+
+    text = (
+        "🤖 **Play Store Scraper Dashboard**\n\n"
+        "🟢 **System Status:** Online\n"
+        "📈 **Session Leads:** " + str(session_stats['total_leads']) + "\n"
+        "📂 **DB Path:** `scraped_emails`\n"
+        "⚙️ **Current Status:** " + status_msg + "\n\n"
+        "👇 Select an action:"
+    )
+    
+    btns = [
+        [InlineKeyboardButton("✅ Health Check", callback_data='check_health'), InlineKeyboardButton("📥 Download All DB", callback_data='dl_all')],
+        [InlineKeyboardButton("🤖 Auto Mode", callback_data='auto_s'), InlineKeyboardButton("♻️ Reset Bot", callback_data='refresh_bot')],
+        [InlineKeyboardButton("📊 Live Stats", callback_data='stats')],
+        [InlineKeyboardButton("🌍 Set Countries", callback_data='set_countries'), InlineKeyboardButton("🗑 Delete N Leads", callback_data='delete_leads')],
+        [InlineKeyboardButton("🔍 Search by App ID", callback_data='search_by_id'), InlineKeyboardButton("🔎 Search by App Name", callback_data='search_by_name')]
+    ]
+    markup = InlineKeyboardMarkup(btns)
+
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text, parse_mode='Markdown', reply_markup=markup)
+        except:
+            pass # Same content error prevention
+    else:
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=markup)
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(str(update.effective_user.id)): return
+    await stats_action(update, context, is_callback=False)
+
+async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(str(update.effective_user.id)): return
+    await health_action(update, context, is_callback=False)
+
+async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(str(update.effective_user.id)): return
+    await download_action(update, context, is_callback=False)
+
+async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(str(update.effective_user.id)): return
+    await auto_action(update, context, is_callback=False)
+
+async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(str(update.effective_user.id)): return
+    await refresh_action(update, context, is_callback=False)
+
+# --- Callback Query Handler ---
+async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = str(update.effective_user.id)
+    user_name = update.effective_user.first_name
+    await q.answer()
+    
+    if not is_owner(uid): return
+
+    if q.data == 'go_back':
+        context.user_data.clear()
+        await start(update, context)
+        return
+
+    if q.data == 'check_health':
+        await health_action(update, context, is_callback=True)
+    elif q.data == 'dl_all':
+        await download_action(update, context, is_callback=True)
+    elif q.data == 'stats':
+        await stats_action(update, context, is_callback=True)
+    elif q.data == 'auto_s':
+        if session_stats['status'] != "Idle" and session_stats['active_by_id'] != uid:
+            await q.edit_message_text(f"⚠️ **Busy!**\nAdmin **{session_stats['active_by_name']}** is currently running a task.", reply_markup=get_back_markup())
+            return
+        context.user_data['stop_signal'] = False
+        await q.edit_message_text(f"🔄 Initializing Auto Mode (User: {user_name})...", reply_markup=get_back_markup())
+        await execute_auto_search(context, uid, user_name)
+    elif q.data == 'refresh_bot':
+        await refresh_action(update, context, is_callback=True)
+    elif q.data == 'stop_loop':
+        if session_stats['active_by_id'] and session_stats['active_by_id'] != uid:
+            await q.message.reply_text(f"⚠️ This task was started by **{session_stats['active_by_name']}**. Only they can stop it.", reply_markup=get_back_markup())
+            return
+        context.user_data['stop_signal'] = True
+        if uid in active_tasks:
+            active_tasks[uid].cancel()
+        session_stats['status'] = "Stopped"
+        session_stats['active_by_id'] = None
+        await q.message.reply_text("🛑 Process Forcefully Stopped.", reply_markup=get_back_markup())
+    elif q.data == 'set_countries':
+        await set_countries_action(update, context)
+    elif q.data == 'delete_leads':
+        await delete_leads_action(update, context)
+    elif q.data == 'search_by_id':
+        context.user_data['awaiting_app_id'] = True
+        await q.edit_message_text("🆔 **Search by App ID**\n\nPlease send the App ID (e.g., `com.tencent.ig` or a link containing it).", parse_mode='Markdown', reply_markup=get_back_markup())
+    elif q.data == 'search_by_name':
+        context.user_data['awaiting_app_name'] = True
+        await q.edit_message_text("🔎 **Search by Exact App Name**\n\nPlease send the exact App Name you want to scrape.", parse_mode='Markdown', reply_markup=get_back_markup())
+
+# --- Message Handler ---
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    if not is_owner(uid): return
+
+    text = update.message.text.strip()
+
+    if context.user_data.get('awaiting_countries'):
+        raw_codes = [code.strip().lower() for code in text.split(',') if code.strip()]
+        valid_codes = [code for code in raw_codes if re.match(r'^[a-z]{2}$', code)]
+        if not valid_codes:
+            await update.message.reply_text("❌ No valid country codes found. Please send codes like: `us,gb,in`", parse_mode='Markdown', reply_markup=get_back_markup())
+            return
+        countries_ref = db.reference('config/countries')
+        await asyncio.to_thread(countries_ref.set, valid_codes)
+        del context.user_data['awaiting_countries']
+        await update.message.reply_text(f"✅ Country codes saved: {', '.join(valid_codes).upper()}\nThey will be used for future scraping.", reply_markup=get_back_markup())
+        return
+
+    if context.user_data.get('awaiting_delete_count'):
+        try:
+            n = int(text)
+            if n <= 0: raise ValueError
+        except ValueError:
+            await update.message.reply_text("❌ Please send a valid positive number (e.g., 100).", reply_markup=get_back_markup())
+            return
+        status_msg = await update.message.reply_text(f"🗑 Deleting {n} leads... Please wait.")
+        deleted, result_msg = await delete_n_leads(uid, n, context)
+        await status_msg.edit_text(result_msg, reply_markup=get_back_markup())
+        del context.user_data['awaiting_delete_count']
+        return
+
+    if context.user_data.get('awaiting_app_id'):
+        del context.user_data['awaiting_app_id']
+        app_id = text
+        match = re.search(r'id=([a-zA-Z0-9_.]+)', text)
+        if match:
+            app_id = match.group(1)
+        active_tasks[uid] = asyncio.create_task(scrape_single_app(app_id, 'id', context, uid, update.effective_user.first_name))
+        return
+
+    if context.user_data.get('awaiting_app_name'):
+        del context.user_data['awaiting_app_name']
+        active_tasks[uid] = asyncio.create_task(scrape_single_app(text, 'name', context, uid, update.effective_user.first_name))
+        return
+
+    if session_stats['status'] != "Idle" and not "Stopped" in session_stats['status']:
+        if session_stats['active_by_id'] != uid:
+            worker_name = session_stats['active_by_name']
+            await update.message.reply_text(
+                f"⚠️ **System Busy!**\n\n"
+                f"👤 Admin **{worker_name}** is currently running a task.\n"
+                f"⚙️ Status: {session_stats['status']}\n\n"
+                f"Please wait until they finish or ask them to stop.",
+                reply_markup=get_back_markup()
+            )
+            return
+        else:
+             await update.message.reply_text(f"⚠️ You already have a task running! Press STOP first.", reply_markup=get_back_markup())
+             return
+
+    user_name = update.effective_user.first_name
+    active_tasks[uid] = asyncio.create_task(scrape_task(text, context, uid, user_name))
+
+# --- Setup Menu ---
+async def setup_persistent_menu(app: Application):
+    commands =[
+        BotCommand("start", "ড্যাশবোর্ড দেখুন"),
+        BotCommand("stats", "লাইভ পরিসংখ্যান"),
+        BotCommand("health", "সিস্টেম হেলথ চেক"),
+        BotCommand("download", "সম্পূর্ণ ডাটাবেস ডাউনলোড"),
+        BotCommand("auto", "অটো মোড চালু করুন"),
+        BotCommand("refresh", "বট রিফ্রেশ করুন"),
+    ]
+    await app.bot.set_my_commands(commands)
+    logger.info("✅ Persistent menu set up with commands.")
+
+# --- Main with Health Endpoint for UptimeRobot ---
+from aiohttp import web
+
+async def health_handler(request):
+    return web.Response(text="OK - Bot is alive - UptimeRobot can ping here", status=200)
+
+async def root_handler(request):
+    return web.Response(text="Bot is running. Use /health for UptimeRobot", status=200)
+
+def main():
+    if not TOKEN:
+        sys.exit("Missing TOKEN")
+    
+    app = Application.builder().token(TOKEN).build()
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(setup_persistent_menu(app))
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("health", health_command))
+    app.add_handler(CommandHandler("download", download_command))
+    app.add_handler(CommandHandler("auto", auto_command))
+    app.add_handler(CommandHandler("refresh", refresh_command))
+    
+    app.add_handler(CallbackQueryHandler(cb_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    
+    if RENDER_URL:
+        # Custom aiohttp app with health endpoint + webhook
+        async def telegram_webhook_handler(request):
+            try:
+                data = await request.json()
+                update = Update.de_json(data, app.bot)
+                await app.process_update(update)
+                return web.Response(status=200)
+            except Exception as e:
+                logger.error(f"Webhook error: {e}")
+                return web.Response(status=500)
+
+        web_app = web.Application()
+        web_app.router.add_get("/", root_handler)
+        web_app.router.add_get("/health", health_handler)
+        web_app.router.add_post(f"/{TOKEN}", telegram_webhook_handler)
+
+        # Set webhook in Telegram
+        async def set_webhook_and_run():
+            await app.bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}")
+            await app.initialize()
+            await app.start()
+            runner = web.AppRunner(web_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", PORT)
+            await site.start()
+            logger.info(f"✅ Webhook set to {RENDER_URL}/{TOKEN}")
+            logger.info(f"✅ Health endpoint at {RENDER_URL}/health")
+            # Keep running forever
+            while True:
+                await asyncio.sleep(3600)
+
+        loop.run_until_complete(set_webhook_and_run())
+    else:
+        print("⚠️ No RENDER_URL found. Using Polling...")
+        app.run_polling()
+
+if __name__ == "__main__":
+    main()
