@@ -1018,7 +1018,7 @@ async function sendCmd(action){
 async function manualSearch(){sendCmd('manual')}
 async function downloadAll(){window.open('/api/download?admin_id='+ADMIN,'_blank');showToast('📥 ডাউনলোড শুরু হচ্ছে...')}
 if(ADMIN){document.getElementById('adminInput').value=ADMIN;doLogin();}
-setInterval(()=>{if(ADMIN)loadStatus()},5000);
+setInterval(()=>{if(ADMIN)loadStatus()},15000);
 </script>
 </body>
 </html>
@@ -1317,16 +1317,16 @@ async def api_download(request):
     return web.Response(text=csv_text, headers=headers)
 
 async def poll_web_commands_loop():
-    # Firebase Chithir Baksho polling - jodi keu sorasori Firebase e command lekhe, bot setao manbe
-    await asyncio.sleep(5)
+    # Firebase Chithir Baksho polling - indexOn chara, jate Firebase rules e error na ase
+    await asyncio.sleep(20)
     while True:
         try:
-            await asyncio.sleep(5)
+            await asyncio.sleep(20)
             if session_stats.get('status') not in ("Idle", "Stopped", None):
                 continue
-            # Pending commands khoja
+            # Pending commands khoja - order_by_child use korbo na, karon Firebase e indexOn lage
             ref = db.reference('web_commands')
-            snap = await asyncio.to_thread(lambda: ref.order_by_child('status').equal_to('pending').limit_to_first(1).get())
+            snap = await asyncio.to_thread(lambda: ref.limit_to_first(20).get())
             if not snap or not isinstance(snap, dict):
                 continue
             for cmd_key, cmd in snap.items():
@@ -1348,8 +1348,8 @@ async def poll_web_commands_loop():
                 elif action == 'stop':
                     session_stats['status'] = "Stopped"
         except Exception as e:
-            logger.error(f"Poll web commands error: {e}")
-            await asyncio.sleep(5)
+            # Choto error hole log e bar bar lal lekha asbe na, chupchap abar try korbe
+            await asyncio.sleep(20)
 
 
 # --- Main with Health Endpoint + Premium Web App (Render) ---
