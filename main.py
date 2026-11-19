@@ -822,71 +822,621 @@ async def setup_persistent_menu(app: Application):
     await app.bot.set_my_commands(commands)
     logger.info("✅ Persistent menu set up with commands.")
 
-# --- Main with Health Endpoint for UptimeRobot ---
+
+# ============================================================
+# PREMIUM WEB APP - Render Only - Same Link as Bot
+# Web App = Remote | Firebase = Chithir Baksho | Render = Engine
+# Service Account thake shudhu Render e, browser e kokhono jay na
+# Admin ID check hoy BOT_OWNER_ID (OWNER_IDS) diye, bot er motoi
+# ============================================================
+
+WEBAPP_HTML = r"""<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GPS EMG • Premium Control</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#070b16;--card:#111827;--card2:#1a233a;--line:rgba(255,255,255,.08);--gold:#fbbf24;--gold2:#f59e0b;--emerald:#10b981;--text:#f8fafc;--mut:#94a3b8}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;padding-bottom:30px}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(7,11,22,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+.logo{display:flex;align-items:center;gap:10px}
+.logoIcon{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#fbbf24,#f59e0b,#ef4444);display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 8px 24px rgba(245,158,11,.35)}
+.logo b{font-size:16px;letter-spacing:.2px}
+.logo span{font-size:11px;color:var(--mut);display:block;margin-top:1px}
+.pill{font-size:11px;font-weight:700;padding:6px 10px;border-radius:999px;background:#064e3b;color:#a7f3d0;border:1px solid rgba(16,185,129,.3);display:flex;gap:5px;align-items:center}
+.pill.dot{width:7px;height:7px;background:#10b981;border-radius:50%;display:inline-block;box-shadow:0 0 0 4px rgba(16,185,129,.2)}
+.wrap{max-width:520px;margin:0 auto;padding:14px 14px 0}
+.hero{background:linear-gradient(135deg,#1e293b 0%,#0f172a 45%,#451a03 100%);border:1px solid var(--line);border-radius:22px;padding:18px;position:relative;overflow:hidden}
+.hero:before{content:"";position:absolute;right:-30px;top:-30px;width:120px;height:120px;background:radial-gradient(circle,#fbbf24 0%,transparent 70%);opacity:.35}
+.hero h1{font-size:22px;line-height:1.2}
+.hero h1 i{color:var(--gold);font-style:normal}
+.hero p{font-size:12.5px;color:#cbd5e1;margin-top:7px;line-height:1.5}
+.heroMeta{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.chip{background:rgba(255,255,255,.08);border:1px solid var(--line);padding:7px 10px;border-radius:999px;font-size:11px;font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.card{background:linear-gradient(180deg,#111827,#0f172a);border:1px solid var(--line);border-radius:18px;padding:14px;position:relative}
+.card small{font-size:11px;color:var(--mut);letter-spacing:.4px;text-transform:uppercase;font-weight:700}
+.card h2{font-size:26px;margin:6px 0 2px}
+.card p{font-size:11.5px;color:var(--mut);line-height:1.4}
+.card .icon{position:absolute;right:12px;top:12px;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.c1 .icon{background:#fef3c7;color:#92400e}.c2 .icon{background:#dcfce7;color:#166534}.c3 .icon{background:#dbeafe;color:#1e40af}.c4 .icon{background:#fce7f3;color:#9d174d}
+.section{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;margin-top:12px}
+.section h3{font-size:15px;display:flex;align-items:center;justify-content:space-between}
+.section h3 span{font-size:11px;background:#1e293b;padding:5px 8px;border-radius:999px;color:#cbd5e1;font-weight:600}
+.btnRow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.btn{border:0;border-radius:14px;padding:13px 10px;font-weight:800;font-size:13.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:.15s}
+.btn:active{transform:scale(.97)}
+.btnGold{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#111827;box-shadow:0 8px 20px rgba(245,158,11,.3)}
+.btnRed{background:#7f1d1d;color:#fecaca;border:1px solid #991b1b}
+.btnDark{background:#1e293b;color:#fff;border:1px solid var(--line)}
+.btnGreen{background:linear-gradient(135deg,#10b981,#059669);color:#fff}
+.btnFull{width:100%;margin-top:10px}
+.input{width:100%;background:#0b1220;border:1px solid var(--line);border-radius:13px;padding:13px 12px;color:#fff;font-size:14px;outline:none}
+.input:focus{border-color:#fbbf24}
+.input::placeholder{color:#64748b}
+.row{display:flex;gap:8px;margin-top:10px}
+.row .input{flex:1}
+.smallBtn{background:#fbbf24;color:#111827;border:0;border-radius:11px;padding:0 16px;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap}
+.smallBtnGhost{background:#1e293b;color:#fff;border:1px solid var(--line);border-radius:11px;padding:0 14px;font-weight:700;font-size:13px;cursor:pointer}
+.kwItem{display:flex;align-items:center;justify-content:space-between;background:#0b1220;border:1px solid var(--line);border-radius:12px;padding:11px 10px;margin-top:8px}
+.kwItem b{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:75%}
+.kwItem button{background:#7f1d1d;color:#fecaca;border:0;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer}
+.lead{border:1px solid var(--line);border-radius:16px;padding:13px;margin-top:10px;background:#0f172a}
+.leadTop{display:flex;gap:10px}
+.leadTop img{width:44px;height:44px;border-radius:12px;object-fit:cover;background:#1e293b;flex-shrink:0}
+.leadTop h4{font-size:14px;line-height:1.3}
+.leadTop p{font-size:11.5px;color:var(--mut);margin-top:3px;line-height:1.4}
+.leadEmail{background:#020617;border:1px dashed #334155;border-radius:10px;padding:9px 10px;margin-top:10px;font-size:12.5px;word-break:break-all;color:#e2e8f0}
+.leadActions{display:flex;gap:7px;margin-top:10px}
+.mini{flex:1;border:1px solid var(--line);background:#1e293b;color:#fff;border-radius:10px;padding:9px;font-size:12px;font-weight:700;cursor:pointer}
+.mini.copy{background:#fbbf24;color:#111827;border-color:#fbbf24}
+.mini.del{background:#450a0a;color:#fecaca;border-color:#7f1d1d}
+.empty{text-align:center;padding:20px 10px;color:var(--mut);font-size:13px;line-height:1.6}
+.loginWrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:radial-gradient(600px 300px at 50% 0%,rgba(251,191,36,.18),transparent)}
+.loginCard{width:100%;max-width:420px;background:#111827;border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center}
+.loginCard .big{width:64px;height:64px;margin:0 auto 12px;border-radius:18px;background:linear-gradient(135deg,#fbbf24,#ef4444);display:flex;align-items:center;justify-content:center;font-size:30px}
+.loginCard h1{font-size:22px}
+.loginCard p{font-size:13px;color:var(--mut);margin-top:8px;line-height:1.6}
+.badge{display:inline-block;background:#fef3c7;color:#92400e;font-size:11px;font-weight:800;padding:5px 9px;border-radius:999px;margin-top:10px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#fbbf24;color:#111827;font-weight:800;font-size:13px;padding:11px 16px;border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.4);display:none;z-index:99;max-width:92%;text-align:center}
+.statusLine{font-size:12px;color:#cbd5e1;background:#0b1220;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:10px;line-height:1.5}
+#app{display:none}
+.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="login" class="loginWrap">
+  <div class="loginCard">
+    <div class="big">👑</div>
+    <h1>GPS EMG <span style="color:#fbbf24">Premium</span></h1>
+    <p>Render থেকে সরাসরি কন্ট্রোল করো।<br>Telegram ছাড়াই, ব্রাউজার থেকেই সব হবে।</p>
+    <div class="badge">✦ PREMIUM • HIGH QUALITY • SECURE</div>
+    <input id="adminInput" class="input" style="margin-top:16px;text-align:center;font-weight:800;letter-spacing:.5px" placeholder="Admin ID লিখো  (যেমন 123456789)" inputmode="numeric">
+    <button onclick="doLogin()" class="btn btnGold btnFull">🔓 ওয়েব অ্যাপ খুলো</button>
+    <p style="font-size:11px;margin-top:12px">শুধু যাদের Admin পারমিশন আছে তারাই ঢুকতে পারবে।<br>Admin ID টা বটের Owner ID এর সাথে মিলিয়ে দেখা হবে।</p>
+    <div id="loginErr" style="display:none;color:#fca5a5;font-size:12px;margin-top:10px;font-weight:700"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="logo"><div class="logoIcon">👑</div><div><b>GPS EMG Premium</b><span id="adminShow">Admin • Render</span></div></div>
+    <div class="pill"><span class="dot"></span><span id="topStatus">Online</span></div>
+  </div>
+  <div class="wrap">
+    <div class="hero">
+      <h1>লিড কন্ট্রোল<br><i>এক জায়গা থেকে সব।</i></h1>
+      <p>বট এখন Render এ চলতেছে। তুমি এখান থেকে Start, Stop, Download, কিওয়ার্ড আর লিড সব কন্ট্রোল করতে পারবা।</p>
+      <div class="heroMeta"><span class="chip">⚡ Render • Live</span><span class="chip">🔒 Admin Protected</span><span class="chip">📱 Mobile App Style</span></div>
+    </div>
+
+    <div class="grid">
+      <div class="card c1"><div class="icon">📥</div><small>DB 1 • Scraped</small><h2 id="c1">--</h2><p>এখনো পাঠানো হয় নাই, এই খাতায় জমা লিড</p></div>
+      <div class="card c2"><div class="icon">✅</div><small>DB 2 • Sent</small><h2 id="c2">--</h2><p>আগে পাঠানো হয়েছে, ডুপ্লিকেট চেকের খাতা</p></div>
+      <div class="card c3"><div class="icon">📋</div><small>Queue • Keywords</small><h2 id="cQ">--</h2><p>অটো মোডে বাকি আছে কয়টা কিওয়ার্ড</p></div>
+      <div class="card c4"><div class="icon">🔥</div><small>Session • Status</small><h2 id="cS" style="font-size:16px;line-height:1.3">Idle</h2><p id="cS2">এই সেশনে পাওয়া লিড</p></div>
+    </div>
+
+    <div class="section">
+      <h3>🎛️ কন্ট্রোল প্যানেল <span id="botStatus">Idle</span></h3>
+      <div class="btnRow">
+        <button class="btn btnGold" onclick="sendCmd('auto')">🤖 Auto Start</button>
+        <button class="btn btnRed" onclick="sendCmd('stop')">🛑 Stop</button>
+      </div>
+      <div class="btnRow">
+        <button class="btn btnGreen" onclick="downloadAll()">📥 Download All</button>
+        <button class="btn btnDark" onclick="refreshAll()">♻️ Refresh</button>
+      </div>
+      <div class="row"><input id="manualKw" class="input" placeholder="একটা কিওয়ার্ড লিখো, যেমন crypto wallet"><button class="smallBtn" onclick="manualSearch()">Search</button></div>
+      <div class="statusLine" id="statusLine">স্ট্যাটাস লোড হচ্ছে...</div>
+    </div>
+
+    <div class="section">
+      <h3>🔑 কিওয়ার্ড <span id="kwCount">0 টা বাকি</span></h3>
+      <div class="row"><input id="newKw" class="input" placeholder="নতুন কিওয়ার্ড যোগ করো"><button class="smallBtn" onclick="addKeyword()">+ যোগ</button></div>
+      <div id="kwList"><div class="empty">কিওয়ার্ড লোড হচ্ছে...</div></div>
+    </div>
+
+    <div class="section">
+      <h3>📋 লিড লিস্ট <span id="leadCount">0 টা</span></h3>
+      <div class="row"><input id="leadSearch" class="input" placeholder="লিড খুঁজো - নাম / ইমেইল / কিওয়ার্ড" oninput="loadLeads(0)"><button class="smallBtnGhost" onclick="loadLeads(0)">খুঁজো</button></div>
+      <div id="leadList"><div class="empty">লিড লোড হচ্ছে...</div></div>
+      <button class="btn btnDark btnFull" onclick="loadMore()">⬇️ আরো দেখো</button>
+    </div>
+    <div class="footer">GPS EMG Premium • Render Live • Service Account দিয়ে Firebase নিরাপদে চলছে<br>Admin ID ছাড়া কেউ ঢুকতে পারবে না</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let ADMIN = localStorage.getItem('gps_admin') || '';
+let OFFSET = 0; let LIMIT = 20;
+function showToast(t){let e=document.getElementById('toast');e.innerText=t;e.style.display='block';setTimeout(()=>e.style.display='none',2200)}
+function headers(){return {'Content-Type':'application/json','X-Admin-ID':ADMIN}}
+async function doLogin(){
+  let v=document.getElementById('adminInput').value.trim();
+  if(!v){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='Admin ID লিখো';return}
+  try{
+    let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({admin_id:v})});
+    let j=await r.json();
+    if(j.ok){ADMIN=v;localStorage.setItem('gps_admin',v);document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';document.getElementById('adminShow').innerText='Admin • '+v;refreshAll();showToast('✅ Welcome, Admin!')}
+    else{document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='❌ এই ID এর পারমিশন নাই';}
+  }catch(e){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='নেট সমস্যা, আবার চেষ্টা করো';}
+}
+async function refreshAll(){await Promise.all([loadStatus(),loadKeywords(),loadLeads(0)])}
+async function loadStatus(){
+  try{let r=await fetch('/api/status',{headers:headers()});let j=await r.json();
+  if(j.ok){document.getElementById('c1').innerText=j.db1;document.getElementById('c2').innerText=j.db2;document.getElementById('cQ').innerText=j.queue;document.getElementById('cS').innerText=j.session_status;document.getElementById('cS2').innerText='সেশনে পাওয়া: '+j.session_leads+' টা লিড';document.getElementById('botStatus').innerText=j.session_status;document.getElementById('topStatus').innerText=j.session_status==='Idle'?'Online':j.session_status;document.getElementById('statusLine').innerHTML='⚙️ <b>'+j.session_status+'</b> • DB1: <b>'+j.db1+'</b> • DB2: <b>'+j.db2+'</b> • Queue: <b>'+j.queue+'</b><br>👤 Run by: '+(j.active_by||'কেউ না')+' • ⏱ '+j.uptime;}}
+  catch(e){}
+}
+async function loadKeywords(){
+  try{let r=await fetch('/api/keywords',{headers:headers()});let j=await r.json();
+  if(j.ok){document.getElementById('kwCount').innerText=j.keywords.length+' টা বাকি';let h=j.keywords.map(k=>'<div class="kwItem"><b>🔑 '+k.word+'</b><button onclick="delKeyword(\''+k.id+'\')">Delete</button></div>').join('');document.getElementById('kwList').innerHTML=h||'<div class="empty">কিউ খালি। নতুন কিওয়ার্ড যোগ করো।</div>';}}
+  catch(e){}
+}
+async function addKeyword(){let v=document.getElementById('newKw').value.trim();if(!v)return showToast('কিওয়ার্ড লিখো');let r=await fetch('/api/keywords',{method:'POST',headers:headers(),body:JSON.stringify({word:v})});let j=await r.json();if(j.ok){document.getElementById('newKw').value='';showToast('✅ কিওয়ার্ড যোগ হইছে');loadKeywords();loadStatus();}else showToast('❌ হয় নাই')}
+async function delKeyword(id){if(!confirm('এই কিওয়ার্ডটা ডিলিট করবো?'))return;let r=await fetch('/api/keywords?id='+id,{method:'DELETE',headers:headers()});let j=await r.json();if(j.ok){showToast('🗑️ ডিলিট হইছে');loadKeywords();loadStatus();}}
+async function loadLeads(reset){
+  if(reset===0)OFFSET=0;
+  let q=document.getElementById('leadSearch').value.trim();
+  try{let r=await fetch('/api/leads?offset='+OFFSET+'&limit='+LIMIT+'&q='+encodeURIComponent(q),{headers:headers()});let j=await r.json();
+  if(j.ok){document.getElementById('leadCount').innerText=j.total+' টা';let h=j.leads.map(l=>'<div class="lead"><div class="leadTop"><img src="'+(l.icon||'')+'" onerror="this.src=\'\'"><div><h4>'+(l.app_name||'App')+'</h4><p>📥 '+(l.installs||'')+' • ⭐ '+(l.score||'')+' • 🔑 '+(l.keyword||'')+'<br>📱 '+(l.app_id||'')+'</p></div></div><div class="leadEmail">📧 '+(l.email||'No email')+'</div><div class="leadActions"><button class="mini copy" onclick="copyText(\''+(l.email||'').replace(/'/g,'')+'\')">📋 Copy</button><button class="mini" onclick="copyText(\''+(l.app_name||'')+' | '+(l.email||'')+'\')">Copy All</button><button class="mini del" onclick="delLead(\''+l.key+'\')">🗑️ Delete</button></div></div>').join('');if(OFFSET===0)document.getElementById('leadList').innerHTML=h||'<div class="empty">কোনো লিড পাওয়া যায় নাই।</div>';else document.getElementById('leadList').innerHTML+=h;}}
+  catch(e){}
+}
+function loadMore(){OFFSET+=LIMIT;loadLeads(1)}
+function copyText(t){if(!t)return;navigator.clipboard.writeText(t).then(()=>showToast('📋 কপি হইছে'))}
+async function delLead(key){if(!confirm('এই লিডটা ডিলিট করবো?'))return;let r=await fetch('/api/leads?key='+encodeURIComponent(key),{method:'DELETE',headers:headers()});let j=await r.json();if(j.ok){showToast('🗑️ লিড ডিলিট হইছে');loadLeads(0);loadStatus();}}
+async function sendCmd(action){
+  let kw=document.getElementById('manualKw').value.trim();
+  let body={action:action};if(action==='manual')body.keyword=kw;
+  if(action==='manual'&&!kw)return showToast('কিওয়ার্ড লিখো');
+  showToast('⏳ কমান্ড পাঠাচ্ছি...');
+  let r=await fetch('/api/command',{method:'POST',headers:headers(),body:JSON.stringify(body)});let j=await r.json();
+  showToast(j.message||'Done');setTimeout(loadStatus,800);
+}
+async function manualSearch(){sendCmd('manual')}
+async function downloadAll(){window.open('/api/download?admin_id='+ADMIN,'_blank');showToast('📥 ডাউনলোড শুরু হচ্ছে...')}
+if(ADMIN){document.getElementById('adminInput').value=ADMIN;doLogin();}
+setInterval(()=>{if(ADMIN)loadStatus()},5000);
+</script>
+</body>
+</html>
+"""
+
+web_logs = []
+web_command_history = []
+
+def _web_get_admin_id(request, body=None):
+    aid = request.headers.get('X-Admin-ID') or request.query.get('admin_id') or ''
+    if not aid and isinstance(body, dict):
+        aid = body.get('admin_id') or body.get('adminId') or ''
+    return str(aid).strip()
+
+def _web_is_admin(admin_id):
+    return str(admin_id).strip() in OWNER_IDS
+
+# Dummy context for Web App triggered tasks - Telegram e message jabe na, status Firebase / session_stats e thakbe
+class _WebBot:
+    async def send_message(self, uid, text, parse_mode=None, reply_markup=None):
+        try:
+            web_logs.append(str(text)[:600])
+            # Firebase e web status update - jate web app dekhte pare
+            try:
+                db.reference('web_status/last_message').set({"text": str(text)[:500], "time": datetime.now().isoformat(), "uid": str(uid)})
+            except:
+                pass
+        except:
+            pass
+        class _M:
+            message_id = 1
+        return _M()
+    async def edit_message_text(self, text, chat_id=None, message_id=None, parse_mode=None, reply_markup=None):
+        try:
+            web_logs.append(str(text)[:600])
+        except:
+            pass
+        return True
+    async def send_document(self, uid, doc, caption=None, reply_markup=None):
+        return True
+
+class _WebContext:
+    def __init__(self, uid):
+        self.bot = _WebBot()
+        self.user_data = {'stop_signal': False, 'web_mode': True}
+        self._uid = str(uid)
+
+def _count_rtdb(path, app_name=None):
+    try:
+        if app_name and app_name in firebase_admin._apps:
+            ref = db.reference(path, app=firebase_admin.get_app(app_name))
+        else:
+            ref = db.reference(path)
+        data = ref.get()
+        if isinstance(data, dict):
+            return len(data)
+        if isinstance(data, list):
+            return len([x for x in data if x is not None])
+        return 0
+    except:
+        return 0
+
+def _get_all_leads_sync():
+    try:
+        ref = db.reference('scraped_emails')
+        data = ref.get()
+        if not data or not isinstance(data, dict):
+            return {}
+        return data
+    except:
+        return {}
+
+def _get_queue_sync():
+    try:
+        if fs_client is None:
+            return []
+        coll = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
+        docs = list(coll.stream())
+        out = []
+        for d in docs:
+            dd = d.to_dict() or {}
+            out.append({"id": d.id, "word": dd.get('word','')})
+        return out
+    except:
+        return []
+
+async def webapp_handler(request):
+    return web.Response(text=WEBAPP_HTML, content_type='text/html', headers={'Cache-Control': 'no-cache'})
+
+async def api_login(request):
+    try:
+        body = await request.json()
+    except:
+        body = {}
+    aid = str(body.get('admin_id','')).strip()
+    if _web_is_admin(aid):
+        return web.json_response({"ok": True, "message": "Welcome Admin"})
+    return web.json_response({"ok": False, "message": "No permission"})
+
+async def api_status(request):
+    aid = _web_get_admin_id(request)
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False, "message": "No permission"}, status=403)
+    db1 = await asyncio.to_thread(_count_rtdb, 'scraped_emails', None)
+    db2 = await asyncio.to_thread(_count_rtdb, SENDER_DB_PATH, 'sender_db')
+    queue = await asyncio.to_thread(_get_queue_sync)
+    uptime = "0m"
+    if session_stats.get('start_time'):
+        delta = datetime.now() - session_stats['start_time']
+        uptime = f"{delta.seconds//60}m {delta.seconds%60}s"
+    return web.json_response({
+        "ok": True,
+        "db1": db1,
+        "db2": db2,
+        "queue": len(queue),
+        "session_leads": session_stats.get('total_leads', 0),
+        "session_status": session_stats.get('status','Idle'),
+        "active_by": session_stats.get('active_by_name') or '',
+        "uptime": uptime,
+        "logs": web_logs[-3:] if web_logs else []
+    })
+
+async def api_leads(request):
+    aid = _web_get_admin_id(request)
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False}, status=403)
+    try:
+        offset = int(request.query.get('offset','0'))
+    except:
+        offset = 0
+    try:
+        limit = int(request.query.get('limit','20'))
+    except:
+        limit = 20
+    q = (request.query.get('q') or '').lower().strip()
+    all_data = await asyncio.to_thread(_get_all_leads_sync)
+    items = []
+    for key, v in all_data.items():
+        if not isinstance(v, dict):
+            continue
+        if q:
+            hay = f"{v.get('app_name','')} {v.get('email','')} {v.get('keyword','')} {v.get('app_id','')}".lower()
+            if q not in hay:
+                continue
+        items.append({"key": key, "app_name": v.get('app_name',''), "app_id": v.get('app_id',''), "icon": v.get('icon',''), "email": v.get('email',''), "phone": v.get('phone',''), "website": v.get('website',''), "installs": v.get('installs',''), "country": v.get('country',''), "keyword": v.get('keyword',''), "date": v.get('date',''), "score": v.get('score',0)})
+    # Newest first by date string
+    try:
+        items.sort(key=lambda x: x.get('date',''), reverse=True)
+    except:
+        pass
+    total = len(items)
+    page = items[offset:offset+limit]
+    return web.json_response({"ok": True, "total": total, "leads": page})
+
+async def api_leads_delete(request):
+    aid = _web_get_admin_id(request)
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False}, status=403)
+    key = request.query.get('key') or ''
+    if not key:
+        return web.json_response({"ok": False, "message": "No key"})
+    try:
+        await asyncio.to_thread(lambda: db.reference('scraped_emails').child(key).delete())
+        return web.json_response({"ok": True, "message": "Deleted"})
+    except Exception as e:
+        return web.json_response({"ok": False, "message": str(e)})
+
+async def api_keywords(request):
+    aid = _web_get_admin_id(request)
+    # For POST, admin may be in body
+    if request.method == 'POST':
+        try:
+            body = await request.json()
+        except:
+            body = {}
+        aid2 = _web_get_admin_id(request, body)
+        if not _web_is_admin(aid2):
+            return web.json_response({"ok": False}, status=403)
+        word = str(body.get('word','')).strip()
+        if not word:
+            return web.json_response({"ok": False, "message": "Empty"})
+        try:
+            coll = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
+            coll.add({"word": word, "added_via": "webapp", "time": datetime.now().isoformat()})
+            return web.json_response({"ok": True, "message": "Keyword added"})
+        except Exception as e:
+            return web.json_response({"ok": False, "message": str(e)})
+    # GET
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False}, status=403)
+    kws = await asyncio.to_thread(_get_queue_sync)
+    return web.json_response({"ok": True, "keywords": kws})
+
+async def api_keywords_delete(request):
+    aid = _web_get_admin_id(request)
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False}, status=403)
+    kid = request.query.get('id') or ''
+    if not kid:
+        return web.json_response({"ok": False})
+    try:
+        doc = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords').document(kid)
+        doc.delete()
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"ok": False, "message": str(e)})
+
+async def api_command(request):
+    try:
+        body = await request.json()
+    except:
+        body = {}
+    aid = _web_get_admin_id(request, body)
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False, "message": "No permission"}, status=403)
+    action = str(body.get('action','')).lower().strip()
+    keyword = str(body.get('keyword','')).strip()
+    # Firebase e Chithir Baksho te command likhe rakha - bot poreo dekhte parbe
+    try:
+        db.reference('web_commands').push({"action": action, "keyword": keyword, "admin_id": aid, "time": datetime.now().isoformat(), "status": "done", "via": "webapp_render"})
+    except:
+        pass
+    # Stop
+    if action == 'stop':
+        # Telegram er motoi stop
+        for uid_key in list(active_tasks.keys()):
+            try:
+                active_tasks[uid_key].cancel()
+            except:
+                pass
+        # Web context stop signal - active web tasks er user_data te
+        session_stats['status'] = "Stopped"
+        session_stats['active_by_id'] = None
+        session_stats['active_by_name'] = None
+        web_command_history.append({"action": "stop", "time": datetime.now().isoformat()})
+        return web.json_response({"ok": True, "message": "🛑 Stopped"})
+    if action == 'auto':
+        if session_stats.get('status') != "Idle" and session_stats.get('status') != "Stopped":
+            return web.json_response({"ok": True, "message": f"⚠️ Busy: {session_stats.get('status')} by {session_stats.get('active_by_name')}"})
+        ctx = _WebContext(aid)
+        # Auto mode: Firestore queue theke ekta keyword niye scrape_task chalabe
+        async def _run_auto():
+            try:
+                await execute_auto_search_web(ctx, aid, "Web Admin")
+            except Exception as e:
+                logger.error(f"Web auto error: {e}")
+        # execute_auto_search_web ke niche define kora ache, loop e task hisebe chalano
+        task = asyncio.create_task(_run_auto())
+        active_tasks[f"web_{aid}"] = task
+        return web.json_response({"ok": True, "message": "🤖 Auto Mode Started from Web App"})
+    if action == 'manual':
+        if not keyword:
+            return web.json_response({"ok": False, "message": "Keyword dao"})
+        if session_stats.get('status') != "Idle" and session_stats.get('status') != "Stopped":
+            return web.json_response({"ok": True, "message": f"⚠️ Busy: {session_stats.get('status')}"})
+        ctx = _WebContext(aid)
+        task = asyncio.create_task(scrape_task(keyword, ctx, aid, "Web Admin", is_auto=False))
+        active_tasks[f"web_{aid}"] = task
+        return web.json_response({"ok": True, "message": f"🔍 Searching: {keyword}"})
+    return web.json_response({"ok": False, "message": "Unknown command"})
+
+async def execute_auto_search_web(context, uid, user_name):
+    # Telegram er execute_auto_search er web version - same Firestore queue use kore
+    if context.user_data.get('stop_signal'):
+        return
+    try:
+        keywords_ref = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
+        docs = keywords_ref.limit(1).get()
+        if docs:
+            kw = docs[0].to_dict().get('word')
+            docs[0].reference.delete()
+            await scrape_task(kw, context, uid, user_name, is_auto=True)
+        else:
+            web_logs.append("Queue empty - Auto finished")
+            session_stats['status'] = "Idle"
+            session_stats['active_by_id'] = None
+    except Exception as e:
+        logger.error(f"Web auto search error: {e}")
+        session_stats['status'] = "Idle"
+
+async def api_download(request):
+    aid = _web_get_admin_id(request)
+    if not _web_is_admin(aid):
+        return web.Response(text="No permission", status=403)
+    all_data = await asyncio.to_thread(_get_all_leads_sync)
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['App Name','App ID','Icon URL','Email','Phone','Website','Installs','Country','Keyword','Date','Score','Total Ratings','1-Star','2-Star','3-Star','4-Star','5-Star'])
+    count = 0
+    for key, v in (all_data or {}).items():
+        if isinstance(v, dict):
+            cw.writerow([v.get('app_name','N/A'),v.get('app_id','N/A'),v.get('icon','N/A'),v.get('email','N/A'),v.get('phone','N/A'),v.get('website','N/A'),v.get('installs','N/A'),v.get('country','N/A'),v.get('keyword','N/A'),v.get('date','N/A'),v.get('score',0.0),v.get('total_ratings',0),v.get('ratings_1',0),v.get('ratings_2',0),v.get('ratings_3',0),v.get('ratings_4',0),v.get('ratings_5',0)])
+            count += 1
+    csv_text = si.getvalue()
+    headers = {'Content-Disposition': f'attachment; filename="GPS_EMG_Premium_{datetime.now().strftime("%Y%m%d_%H%M")}.csv"', 'Content-Type': 'text/csv; charset=utf-8'}
+    return web.Response(text=csv_text, headers=headers)
+
+async def poll_web_commands_loop():
+    # Firebase Chithir Baksho polling - jodi keu sorasori Firebase e command lekhe, bot setao manbe
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.sleep(5)
+            if session_stats.get('status') not in ("Idle", "Stopped", None):
+                continue
+            # Pending commands khoja
+            ref = db.reference('web_commands')
+            snap = await asyncio.to_thread(lambda: ref.order_by_child('status').equal_to('pending').limit_to_first(1).get())
+            if not snap or not isinstance(snap, dict):
+                continue
+            for cmd_key, cmd in snap.items():
+                if not isinstance(cmd, dict):
+                    continue
+                action = str(cmd.get('action','')).lower()
+                kw = str(cmd.get('keyword','')).strip()
+                aid = str(cmd.get('admin_id',''))
+                if not _web_is_admin(aid):
+                    await asyncio.to_thread(lambda: ref.child(cmd_key).update({"status": "rejected"}))
+                    continue
+                # Mark processing to avoid double
+                await asyncio.to_thread(lambda: ref.child(cmd_key).update({"status": "done"}))
+                ctx = _WebContext(aid)
+                if action == 'auto':
+                    asyncio.create_task(execute_auto_search_web(ctx, aid, "Web Admin"))
+                elif action == 'manual' and kw:
+                    asyncio.create_task(scrape_task(kw, ctx, aid, "Web Admin", is_auto=False))
+                elif action == 'stop':
+                    session_stats['status'] = "Stopped"
+        except Exception as e:
+            logger.error(f"Poll web commands error: {e}")
+            await asyncio.sleep(5)
+
+
+# --- Main with Health Endpoint + Premium Web App (Render) ---
 from aiohttp import web
 
 async def health_handler(request):
     return web.Response(text="OK - Bot is alive - UptimeRobot can ping here", status=200)
 
 async def root_handler(request):
-    return web.Response(text="Bot is running. Use /health for UptimeRobot", status=200)
+    # Render link khullei Premium Web App khulbe
+    return web.Response(text=WEBAPP_HTML, content_type='text/html', headers={'Cache-Control': 'no-cache'})
 
 def main():
     if not TOKEN:
         sys.exit("Missing TOKEN")
-    
     app = Application.builder().token(TOKEN).build()
-    
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(setup_persistent_menu(app))
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("health", health_command))
     app.add_handler(CommandHandler("download", download_command))
     app.add_handler(CommandHandler("auto", auto_command))
     app.add_handler(CommandHandler("refresh", refresh_command))
-    
     app.add_handler(CallbackQueryHandler(cb_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    
+
+    async def telegram_webhook_handler(request):
+        try:
+            data = await request.json()
+            update = Update.de_json(data, app.bot)
+            await app.process_update(update)
+            return web.Response(status=200)
+        except Exception as e:
+            logger.error(f"Webhook error: {e}")
+            return web.Response(status=500)
+
+    web_app = web.Application()
+    # Premium Web App - Render link
+    web_app.router.add_get("/", root_handler)
+    web_app.router.add_get("/app", webapp_handler)
+    web_app.router.add_get("/health", health_handler)
+    # Web App API - shob Render er vitore, Service Account diye Firebase e kotha bole
+    web_app.router.add_post("/api/login", api_login)
+    web_app.router.add_get("/api/status", api_status)
+    web_app.router.add_get("/api/leads", api_leads)
+    web_app.router.add_delete("/api/leads", api_leads_delete)
+    web_app.router.add_get("/api/keywords", api_keywords)
+    web_app.router.add_post("/api/keywords", api_keywords)
+    web_app.router.add_delete("/api/keywords", api_keywords_delete)
+    web_app.router.add_post("/api/command", api_command)
+    web_app.router.add_get("/api/download", api_download)
+    web_app.router.add_post(f"/{TOKEN}", telegram_webhook_handler)
+
     if RENDER_URL:
-        # Custom aiohttp app with health endpoint + webhook
-        async def telegram_webhook_handler(request):
-            try:
-                data = await request.json()
-                update = Update.de_json(data, app.bot)
-                await app.process_update(update)
-                return web.Response(status=200)
-            except Exception as e:
-                logger.error(f"Webhook error: {e}")
-                return web.Response(status=500)
-
-        web_app = web.Application()
-        web_app.router.add_get("/", root_handler)
-        web_app.router.add_get("/health", health_handler)
-        web_app.router.add_post(f"/{TOKEN}", telegram_webhook_handler)
-
-        # Set webhook in Telegram
         async def set_webhook_and_run():
             await app.bot.set_webhook(url=f"{RENDER_URL}/{TOKEN}")
             await app.initialize()
             await app.start()
+            # Firebase Chithir Baksho polling - web app theke Firebase e command asleo bot manbe
+            asyncio.create_task(poll_web_commands_loop())
             runner = web.AppRunner(web_app)
             await runner.setup()
             site = web.TCPSite(runner, "0.0.0.0", PORT)
             await site.start()
             logger.info(f"✅ Webhook set to {RENDER_URL}/{TOKEN}")
+            logger.info(f"✅ Premium Web App at {RENDER_URL}/")
             logger.info(f"✅ Health endpoint at {RENDER_URL}/health")
-            # Keep running forever
             while True:
                 await asyncio.sleep(3600)
-
         loop.run_until_complete(set_webhook_and_run())
     else:
-        print("⚠️ No RENDER_URL found. Using Polling...")
-        app.run_polling()
+        print("⚠️ No RENDER_URL found. Using Polling + Web App...")
+        async def run_polling_with_web():
+            await app.initialize()
+            await app.start()
+            asyncio.create_task(poll_web_commands_loop())
+            runner = web.AppRunner(web_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", PORT)
+            await site.start()
+            logger.info(f"✅ Premium Web App at http://localhost:{PORT}/")
+            await app.updater.start_polling()
+            while True:
+                await asyncio.sleep(3600)
+        loop.run_until_complete(run_polling_with_web())
 
 if __name__ == "__main__":
     main()
