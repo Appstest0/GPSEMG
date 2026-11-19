@@ -9,7 +9,14 @@ import sys
 import re
 import aiohttp
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+# Dhaka time - sob jaygay ek e ghori cholbe, UTC + 6 = Dhaka
+DHAKA_TZ = timezone(timedelta(hours=6))
+def dhaka_now():
+    return datetime.now(DHAKA_TZ)
+# Logging eo Dhaka time dekhabe, jate Render log ar Telegram e ek e time ase
+import logging as _logging
+_logging.Formatter.converter = lambda *args: dhaka_now().timetuple()
 
 # Third-party imports
 import dns.resolver
@@ -241,7 +248,7 @@ async def delete_n_leads(uid, n, context):
 # --- Single App Scraper Engine ---
 async def scrape_single_app(query_text, search_type, context, uid, user_name):
     session_stats['status'] = f"Running Single: {query_text}"
-    session_stats['start_time'] = datetime.now()
+    session_stats['start_time'] = dhaka_now()
     session_stats['active_by_id'] = str(uid)
     session_stats['active_by_name'] = user_name
 
@@ -312,7 +319,7 @@ async def scrape_single_app(query_text, search_type, context, uid, user_name):
         'installs': app_info.get('installs'),
         'country': 'us', 
         'keyword': query_text,
-        'date': datetime.now().isoformat(),
+        'date': dhaka_now().isoformat(),
         'score': app_info.get('score', 0.0),
         'total_ratings': total_ratings,
         'ratings_1': histogram[0] if len(histogram) > 0 else 0,
@@ -345,7 +352,7 @@ async def scrape_single_app(query_text, search_type, context, uid, user_name):
 async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
     context.user_data['stop_signal'] = False
     session_stats['status'] = f"Running: {base_kw}"
-    session_stats['start_time'] = datetime.now()
+    session_stats['start_time'] = dhaka_now()
     session_stats['active_by_id'] = str(uid)
     session_stats['active_by_name'] = user_name
     
@@ -444,7 +451,7 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
                                 'installs': app.get('installs'),
                                 'country': country,
                                 'keyword': kw,
-                                'date': datetime.now().isoformat(),
+                                'date': dhaka_now().isoformat(),
                                 'score': score,
                                 'total_ratings': sum(histogram),
                                 'ratings_1': histogram[0] if len(histogram) > 0 else 0,
@@ -499,6 +506,14 @@ async def execute_auto_search(context, uid, user_name):
             session_stats['status'] = "Idle"
             session_stats['active_by_id'] = None
     except Exception as e:
+        # 429 Quota hole 60 sec wait kore abar try, bar bar fail dekhabe na
+        if '429' in str(e) or 'Quota' in str(e):
+            await asyncio.sleep(60)
+            try:
+                await execute_auto_search(context, uid, user_name)
+                return
+            except:
+                pass
         await send_log(context, uid, f"Auto Mode Error: {e}")
         session_stats['status'] = "Idle"
 
@@ -506,7 +521,7 @@ async def execute_auto_search(context, uid, user_name):
 async def health_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
     uid = str(update.effective_user.id)
     try:
-        db.reference('health_check').set({"status": "ok", "time": str(datetime.now())})
+        db.reference('health_check').set({"status": "ok", "time": str(dhaka_now())})
         fb_status = "✅ Connected & Writeable"
         
         # Check Sender DB Status
@@ -557,7 +572,7 @@ async def download_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is
                     count += 1
             
             output = io.BytesIO(si.getvalue().encode('utf-8'))
-            output.name = f"Full_Database_{datetime.now().strftime('%Y%m%d')}.csv"
+            output.name = f"Full_Database_{dhaka_now().strftime('%Y%m%d')}.csv"
             
             await context.bot.send_document(uid, output, caption=f"✅ **Database Downloaded**\n\n📂 Total Records: {count}", reply_markup=get_back_markup())
         else:
@@ -569,7 +584,7 @@ async def download_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is
 async def stats_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
     dur = "0m"
     if session_stats['start_time']:
-        delta = datetime.now() - session_stats['start_time']
+        delta = dhaka_now() - session_stats['start_time']
         dur = f"{delta.seconds // 60}m {delta.seconds % 60}s"
         
     status_info = session_stats['status']
@@ -865,6 +880,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .section{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;margin-top:12px}
 .section h3{font-size:15px;display:flex;align-items:center;justify-content:space-between}
 .section h3 span{font-size:11px;background:#1e293b;padding:5px 8px;border-radius:999px;color:#cbd5e1;font-weight:600}
+.tabBar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.tabBtn{border:1px solid var(--line);background:#1e293b;color:#fff;border-radius:14px;padding:14px 8px;font-weight:800;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.tabBtn.active{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#111827;border-color:#fbbf24;box-shadow:0 8px 20px rgba(245,158,11,.3)}
+.tabBtn span{background:rgba(0,0,0,.18);padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800}
+.tabPanel{display:none;margin-top:12px;border:1px solid var(--line);border-radius:16px;padding:12px;background:#0f172a}
+.tabPanel.open{display:block;animation:slideDown .22s ease}
+@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.scrollBox{overflow-y:auto;overscroll-behavior:contain;padding-right:2px}
+.leadsScroll{max-height:520px}
+.kwScroll{max-height:420px}
+.panelHead{font-size:14px;font-weight:800;display:flex;justify-content:space-between;align-items:center}
+.panelHead span{font-size:11px;background:#1e293b;padding:5px 8px;border-radius:999px;color:#cbd5e1}
 .btnRow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
 .btn{border:0;border-radius:14px;padding:13px 10px;font-weight:800;font-size:13.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:.15s}
 .btn:active{transform:scale(.97)}
@@ -954,16 +981,24 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
 
     <div class="section">
-      <h3>🔑 কিওয়ার্ড <span id="kwCount">0 টা বাকি</span></h3>
-      <div class="row"><input id="newKw" class="input" placeholder="নতুন কিওয়ার্ড যোগ করো"><button class="smallBtn" onclick="addKeyword()">+ যোগ</button></div>
-      <div id="kwList"><div class="empty">কিওয়ার্ড লোড হচ্ছে...</div></div>
-    </div>
+      <h3>📂 লিড ও কিওয়ার্ড <span>বাটনে চাপ দিলে নিচে খুলবে</span></h3>
+      <div class="tabBar">
+        <button id="tabBtnLeads" class="tabBtn active" onclick="togglePanel('leads')">📋 লিড <span id="leadCountBtn">0</span></button>
+        <button id="tabBtnKeywords" class="tabBtn" onclick="togglePanel('keywords')">🔑 কিওয়ার্ড <span id="kwCountBtn">0</span></button>
+      </div>
 
-    <div class="section">
-      <h3>📋 লিড লিস্ট <span id="leadCount">0 টা</span></h3>
-      <div class="row"><input id="leadSearch" class="input" placeholder="লিড খুঁজো - নাম / ইমেইল / কিওয়ার্ড" oninput="loadLeads(0)"><button class="smallBtnGhost" onclick="loadLeads(0)">খুঁজো</button></div>
-      <div id="leadList"><div class="empty">লিড লোড হচ্ছে...</div></div>
-      <button class="btn btnDark btnFull" onclick="loadMore()">⬇️ আরো দেখো</button>
+      <div id="panelLeads" class="tabPanel open">
+        <div class="panelHead">📋 লিড লিস্ট <span id="leadCount">0 টা</span></div>
+        <div class="row"><input id="leadSearch" class="input" placeholder="লিড খুঁজো - নাম / ইমেইল / কিওয়ার্ড" oninput="loadLeads(0)"><button class="smallBtnGhost" onclick="loadLeads(0)">খুঁজো</button></div>
+        <div id="leadList" class="scrollBox leadsScroll"><div class="empty">লিড লোড হচ্ছে...</div></div>
+        <button class="btn btnDark btnFull" onclick="loadMore()">⬇️ আরো দেখো</button>
+      </div>
+
+      <div id="panelKeywords" class="tabPanel">
+        <div class="panelHead">🔑 কিওয়ার্ড <span id="kwCount">0 টা বাকি</span></div>
+        <div class="row"><input id="newKw" class="input" placeholder="নতুন কিওয়ার্ড যোগ করো"><button class="smallBtn" onclick="addKeyword()">+ যোগ</button></div>
+        <div id="kwList" class="scrollBox kwScroll"><div class="empty">কিওয়ার্ড লোড হচ্ছে...</div></div>
+      </div>
     </div>
     <div class="footer">GPS EMG Premium • Render Live • Service Account দিয়ে Firebase নিরাপদে চলছে<br>Admin ID ছাড়া কেউ ঢুকতে পারবে না</div>
   </div>
@@ -984,6 +1019,23 @@ async function doLogin(){
     else{document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='❌ এই ID এর পারমিশন নাই';}
   }catch(e){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='নেট সমস্যা, আবার চেষ্টা করো';}
 }
+function togglePanel(which){
+  let leads=document.getElementById('panelLeads');
+  let kws=document.getElementById('panelKeywords');
+  let bL=document.getElementById('tabBtnLeads');
+  let bK=document.getElementById('tabBtnKeywords');
+  if(which==='leads'){
+    let willOpen=!leads.classList.contains('open');
+    leads.classList.toggle('open',willOpen); kws.classList.remove('open');
+    bL.classList.toggle('active',willOpen); bK.classList.remove('active');
+    if(willOpen) loadLeads(0);
+  } else {
+    let willOpen=!kws.classList.contains('open');
+    kws.classList.toggle('open',willOpen); leads.classList.remove('open');
+    bK.classList.toggle('active',willOpen); bL.classList.remove('active');
+    if(willOpen) loadKeywords();
+  }
+}
 async function refreshAll(){await Promise.all([loadStatus(),loadKeywords(),loadLeads(0)])}
 async function loadStatus(){
   try{let r=await fetch('/api/status',{headers:headers()});let j=await r.json();
@@ -992,7 +1044,7 @@ async function loadStatus(){
 }
 async function loadKeywords(){
   try{let r=await fetch('/api/keywords',{headers:headers()});let j=await r.json();
-  if(j.ok){document.getElementById('kwCount').innerText=j.keywords.length+' টা বাকি';let h=j.keywords.map(k=>'<div class="kwItem"><b>🔑 '+k.word+'</b><button onclick="delKeyword(\''+k.id+'\')">Delete</button></div>').join('');document.getElementById('kwList').innerHTML=h||'<div class="empty">কিউ খালি। নতুন কিওয়ার্ড যোগ করো।</div>';}}
+  if(j.ok){document.getElementById('kwCount').innerText=j.keywords.length+' টা বাকি';document.getElementById('kwCountBtn').innerText=j.keywords.length;let h=j.keywords.map(k=>'<div class="kwItem"><b>🔑 '+k.word+'</b><button onclick="delKeyword(\''+k.id+'\')">Delete</button></div>').join('');document.getElementById('kwList').innerHTML=h||'<div class="empty">কিউ খালি। নতুন কিওয়ার্ড যোগ করো।</div>';}}
   catch(e){}
 }
 async function addKeyword(){let v=document.getElementById('newKw').value.trim();if(!v)return showToast('কিওয়ার্ড লিখো');let r=await fetch('/api/keywords',{method:'POST',headers:headers(),body:JSON.stringify({word:v})});let j=await r.json();if(j.ok){document.getElementById('newKw').value='';showToast('✅ কিওয়ার্ড যোগ হইছে');loadKeywords();loadStatus();}else showToast('❌ হয় নাই')}
@@ -1001,7 +1053,7 @@ async function loadLeads(reset){
   if(reset===0)OFFSET=0;
   let q=document.getElementById('leadSearch').value.trim();
   try{let r=await fetch('/api/leads?offset='+OFFSET+'&limit='+LIMIT+'&q='+encodeURIComponent(q),{headers:headers()});let j=await r.json();
-  if(j.ok){document.getElementById('leadCount').innerText=j.total+' টা';let h=j.leads.map(l=>'<div class="lead"><div class="leadTop"><img src="'+(l.icon||'')+'" onerror="this.src=\'\'"><div><h4>'+(l.app_name||'App')+'</h4><p>📥 '+(l.installs||'')+' • ⭐ '+(l.score||'')+' • 🔑 '+(l.keyword||'')+'<br>📱 '+(l.app_id||'')+'</p></div></div><div class="leadEmail">📧 '+(l.email||'No email')+'</div><div class="leadActions"><button class="mini copy" onclick="copyText(\''+(l.email||'').replace(/'/g,'')+'\')">📋 Copy</button><button class="mini" onclick="copyText(\''+(l.app_name||'')+' | '+(l.email||'')+'\')">Copy All</button><button class="mini del" onclick="delLead(\''+l.key+'\')">🗑️ Delete</button></div></div>').join('');if(OFFSET===0)document.getElementById('leadList').innerHTML=h||'<div class="empty">কোনো লিড পাওয়া যায় নাই।</div>';else document.getElementById('leadList').innerHTML+=h;}}
+  if(j.ok){document.getElementById('leadCount').innerText=j.total+' টা';document.getElementById('leadCountBtn').innerText=j.total;let h=j.leads.map(l=>'<div class="lead"><div class="leadTop"><img src="'+(l.icon||'')+'" onerror="this.src=\'\'"><div><h4>'+(l.app_name||'App')+'</h4><p>📥 '+(l.installs||'')+' • ⭐ '+(l.score||'')+' • 🔑 '+(l.keyword||'')+'<br>📱 '+(l.app_id||'')+'</p></div></div><div class="leadEmail">📧 '+(l.email||'No email')+'</div><div class="leadActions"><button class="mini copy" onclick="copyText(\''+(l.email||'').replace(/'/g,'')+'\')">📋 Copy</button><button class="mini" onclick="copyText(\''+(l.app_name||'')+' | '+(l.email||'')+'\')">Copy All</button><button class="mini del" onclick="delLead(\''+l.key+'\')">🗑️ Delete</button></div></div>').join('');if(OFFSET===0)document.getElementById('leadList').innerHTML=h||'<div class="empty">কোনো লিড পাওয়া যায় নাই।</div>';else document.getElementById('leadList').innerHTML+=h;}}
   catch(e){}
 }
 function loadMore(){OFFSET+=LIMIT;loadLeads(1)}
@@ -1043,7 +1095,7 @@ class _WebBot:
             web_logs.append(str(text)[:600])
             # Firebase e web status update - jate web app dekhte pare
             try:
-                db.reference('web_status/last_message').set({"text": str(text)[:500], "time": datetime.now().isoformat(), "uid": str(uid)})
+                db.reference('web_status/last_message').set({"text": str(text)[:500], "time": dhaka_now().isoformat(), "uid": str(uid)})
             except:
                 pass
         except:
@@ -1091,7 +1143,12 @@ def _get_all_leads_sync():
     except:
         return {}
 
+_queue_cache = {"time": 0, "data": []}
 def _get_queue_sync():
+    # 30 sec cache - bar bar Firestore e hit korle 429 ase, tai cache
+    import time as _time
+    if _time.time() - _queue_cache["time"] < 30 and _queue_cache["data"]:
+        return _queue_cache["data"]
     try:
         if fs_client is None:
             return []
@@ -1101,9 +1158,11 @@ def _get_queue_sync():
         for d in docs:
             dd = d.to_dict() or {}
             out.append({"id": d.id, "word": dd.get('word','')})
+        _queue_cache["time"] = _time.time()
+        _queue_cache["data"] = out
         return out
     except:
-        return []
+        return _queue_cache.get("data", [])
 
 async def webapp_handler(request):
     return web.Response(text=WEBAPP_HTML, content_type='text/html', headers={'Cache-Control': 'no-cache'})
@@ -1127,7 +1186,7 @@ async def api_status(request):
     queue = await asyncio.to_thread(_get_queue_sync)
     uptime = "0m"
     if session_stats.get('start_time'):
-        delta = datetime.now() - session_stats['start_time']
+        delta = dhaka_now() - session_stats['start_time']
         uptime = f"{delta.seconds//60}m {delta.seconds%60}s"
     return web.json_response({
         "ok": True,
@@ -1202,7 +1261,7 @@ async def api_keywords(request):
             return web.json_response({"ok": False, "message": "Empty"})
         try:
             coll = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
-            coll.add({"word": word, "added_via": "webapp", "time": datetime.now().isoformat()})
+            coll.add({"word": word, "added_via": "webapp", "time": dhaka_now().isoformat()})
             return web.json_response({"ok": True, "message": "Keyword added"})
         except Exception as e:
             return web.json_response({"ok": False, "message": str(e)})
@@ -1238,7 +1297,7 @@ async def api_command(request):
     keyword = str(body.get('keyword','')).strip()
     # Firebase e Chithir Baksho te command likhe rakha - bot poreo dekhte parbe
     try:
-        db.reference('web_commands').push({"action": action, "keyword": keyword, "admin_id": aid, "time": datetime.now().isoformat(), "status": "done", "via": "webapp_render"})
+        db.reference('web_commands').push({"action": action, "keyword": keyword, "admin_id": aid, "time": dhaka_now().isoformat(), "status": "done", "via": "webapp_render"})
     except:
         pass
     # Stop
@@ -1253,7 +1312,7 @@ async def api_command(request):
         session_stats['status'] = "Stopped"
         session_stats['active_by_id'] = None
         session_stats['active_by_name'] = None
-        web_command_history.append({"action": "stop", "time": datetime.now().isoformat()})
+        web_command_history.append({"action": "stop", "time": dhaka_now().isoformat()})
         return web.json_response({"ok": True, "message": "🛑 Stopped"})
     if action == 'auto':
         if session_stats.get('status') != "Idle" and session_stats.get('status') != "Stopped":
@@ -1313,7 +1372,7 @@ async def api_download(request):
             cw.writerow([v.get('app_name','N/A'),v.get('app_id','N/A'),v.get('icon','N/A'),v.get('email','N/A'),v.get('phone','N/A'),v.get('website','N/A'),v.get('installs','N/A'),v.get('country','N/A'),v.get('keyword','N/A'),v.get('date','N/A'),v.get('score',0.0),v.get('total_ratings',0),v.get('ratings_1',0),v.get('ratings_2',0),v.get('ratings_3',0),v.get('ratings_4',0),v.get('ratings_5',0)])
             count += 1
     csv_text = si.getvalue()
-    headers = {'Content-Disposition': f'attachment; filename="GPS_EMG_Premium_{datetime.now().strftime("%Y%m%d_%H%M")}.csv"', 'Content-Type': 'text/csv; charset=utf-8'}
+    headers = {'Content-Disposition': f'attachment; filename="GPS_EMG_Premium_{dhaka_now().strftime("%Y%m%d_%H%M")}.csv"', 'Content-Type': 'text/csv; charset=utf-8'}
     return web.Response(text=csv_text, headers=headers)
 
 async def poll_web_commands_loop():
