@@ -63,6 +63,9 @@ GROQ_KEYS =[k.strip() for k in KEY_ENV.split(',') if k.strip()]
 
 # Global State
 active_tasks = {}
+# Global Stop - Web ar Telegram 2 jaygay theke ek e Stop kaj korbe
+GLOBAL_STOP = {"requested": False}
+web_contexts = {}  # Web theke chalu task er context, jate Stop dile stop_signal dite pari
 session_stats = {
     'total_leads': 0, 
     'start_time': None, 
@@ -385,7 +388,7 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
 
     try:
         for kw_idx, kw in enumerate(keywords):
-            if context.user_data.get('stop_signal'): break
+            if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'): break
             if kw_idx % 5 == 0:
                 try:
                     await context.bot.edit_message_text(
@@ -395,7 +398,7 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
                 except: pass
 
             for country in countries:
-                if context.user_data.get('stop_signal'): break
+                if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'): break
                 await asyncio.sleep(1.2)
 
                 try:
@@ -403,7 +406,7 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
                     if not results: continue
 
                     for r in results:
-                        if context.user_data.get('stop_signal'): break
+                        if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'): break
                         app_id = r['appId']
                         
                         try:
@@ -488,12 +491,12 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
         session_stats['status'] = "Idle"
         session_stats['active_by_id'] = None
     finally:
-        if not context.user_data.get('stop_signal') and is_auto:
+        if not context.user_data.get('stop_signal') and not GLOBAL_STOP.get('requested') and is_auto:
             await asyncio.sleep(2)
             await execute_auto_search(context, uid, user_name)
 
 async def execute_auto_search(context, uid, user_name):
-    if context.user_data.get('stop_signal'): return
+    if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'): return
     try:
         keywords_ref = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
         docs = keywords_ref.limit(1).get()
@@ -744,8 +747,14 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text(f"⚠️ This task was started by **{session_stats['active_by_name']}**. Only they can stop it.", reply_markup=get_back_markup())
             return
         context.user_data['stop_signal'] = True
-        if uid in active_tasks:
-            active_tasks[uid].cancel()
+        GLOBAL_STOP["requested"] = True
+        for _k in list(active_tasks.keys()):
+            try: active_tasks[_k].cancel()
+            except: pass
+        active_tasks.clear()
+        for _ctx in list(web_contexts.values()):
+            try: _ctx.user_data['stop_signal'] = True
+            except: pass
         session_stats['status'] = "Stopped"
         session_stats['active_by_id'] = None
         await q.message.reply_text("🛑 Process Forcefully Stopped.", reply_markup=get_back_markup())
@@ -1300,15 +1309,18 @@ async def api_command(request):
         db.reference('web_commands').push({"action": action, "keyword": keyword, "admin_id": aid, "time": dhaka_now().isoformat(), "status": "done", "via": "webapp_render"})
     except:
         pass
-    # Stop
+    # Stop - Web theke dile asolei thambe, abar nije chalu hobe na
     if action == 'stop':
-        # Telegram er motoi stop
+        GLOBAL_STOP["requested"] = True
+        for _ctx in list(web_contexts.values()):
+            try: _ctx.user_data['stop_signal'] = True
+            except: pass
         for uid_key in list(active_tasks.keys()):
             try:
                 active_tasks[uid_key].cancel()
             except:
                 pass
-        # Web context stop signal - active web tasks er user_data te
+        active_tasks.clear()
         session_stats['status'] = "Stopped"
         session_stats['active_by_id'] = None
         session_stats['active_by_name'] = None
@@ -1317,7 +1329,9 @@ async def api_command(request):
     if action == 'auto':
         if session_stats.get('status') != "Idle" and session_stats.get('status') != "Stopped":
             return web.json_response({"ok": True, "message": f"⚠️ Busy: {session_stats.get('status')} by {session_stats.get('active_by_name')}"})
+        GLOBAL_STOP["requested"] = False
         ctx = _WebContext(aid)
+        web_contexts[aid] = ctx
         # Auto mode: Firestore queue theke ekta keyword niye scrape_task chalabe
         async def _run_auto():
             try:
@@ -1333,7 +1347,9 @@ async def api_command(request):
             return web.json_response({"ok": False, "message": "Keyword dao"})
         if session_stats.get('status') != "Idle" and session_stats.get('status') != "Stopped":
             return web.json_response({"ok": True, "message": f"⚠️ Busy: {session_stats.get('status')}"})
+        GLOBAL_STOP["requested"] = False
         ctx = _WebContext(aid)
+        web_contexts[aid] = ctx
         task = asyncio.create_task(scrape_task(keyword, ctx, aid, "Web Admin", is_auto=False))
         active_tasks[f"web_{aid}"] = task
         return web.json_response({"ok": True, "message": f"🔍 Searching: {keyword}"})
@@ -1341,7 +1357,7 @@ async def api_command(request):
 
 async def execute_auto_search_web(context, uid, user_name):
     # Telegram er execute_auto_search er web version - same Firestore queue use kore
-    if context.user_data.get('stop_signal'):
+    if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'):
         return
     try:
         keywords_ref = fs_client.collection('artifacts').document('keyword-bot-pro').collection('public').document('data').collection('keywords')
