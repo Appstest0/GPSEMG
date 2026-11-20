@@ -1560,9 +1560,9 @@ def main():
             await app.start()
             # Firebase Chithir Baksho polling - web app theke Firebase e command asleo bot manbe
             asyncio.create_task(poll_web_commands_loop())
-            runner = web.AppRunner(web_app)
+            runner = web.AppRunner(web_app, access_log=None)  # aiohttp er UTC access log bondho
             await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT, access_log=None)  # aiohttp er UTC access log bondho, sudhu Dhaka log thakbe
+            site = web.TCPSite(runner, "0.0.0.0", PORT)
             await site.start()
             logger.info(f"✅ Webhook set to {RENDER_URL}/{TOKEN}")
             logger.info(f"✅ Premium Web App at {RENDER_URL}/")
@@ -1576,9 +1576,9 @@ def main():
             await app.initialize()
             await app.start()
             asyncio.create_task(poll_web_commands_loop())
-            runner = web.AppRunner(web_app)
+            runner = web.AppRunner(web_app, access_log=None)  # aiohttp er UTC access log bondho
             await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT, access_log=None)  # aiohttp er UTC access log bondho, sudhu Dhaka log thakbe
+            site = web.TCPSite(runner, "0.0.0.0", PORT)
             await site.start()
             logger.info(f"✅ Premium Web App at http://localhost:{PORT}/")
             await app.updater.start_polling()
