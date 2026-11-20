@@ -17,6 +17,10 @@ def dhaka_now():
 # Logging eo Dhaka time dekhabe, jate Render log ar Telegram e ek e time ase
 import logging as _logging
 _logging.Formatter.converter = lambda *args: dhaka_now().timetuple()
+# httpx / aiohttp er 200 OK log bondho - sudhu dorkari log thakbe, Render log halka hobe
+_logging.getLogger("httpx").setLevel(_logging.WARNING)
+_logging.getLogger("httpcore").setLevel(_logging.WARNING)
+_logging.getLogger("aiohttp.access").setLevel(_logging.WARNING)
 
 # Third-party imports
 import dns.resolver
@@ -65,6 +69,12 @@ GROQ_KEYS =[k.strip() for k in KEY_ENV.split(',') if k.strip()]
 active_tasks = {}
 # Global Stop - Web ar Telegram 2 jaygay theke ek e Stop kaj korbe
 GLOBAL_STOP = {"requested": False}
+TELEGRAM_APP = None
+def _update_sync(action, source, admin_id=""):
+    try:
+        db.reference('sync/last_action').set({"action": str(action), "source": str(source), "admin_id": str(admin_id), "time": dhaka_now().isoformat(), "status": session_stats.get('status','Idle')})
+    except:
+        pass
 web_contexts = {}  # Web theke chalu task er context, jate Stop dile stop_signal dite pari
 session_stats = {
     'total_leads': 0, 
@@ -389,7 +399,7 @@ async def scrape_task(base_kw, context, uid, user_name, is_auto=False):
     try:
         for kw_idx, kw in enumerate(keywords):
             if context.user_data.get('stop_signal') or GLOBAL_STOP.get('requested'): break
-            if kw_idx % 5 == 0:
+            if kw_idx % 15 == 0:  # 5 por por edit korle log + bandwidth bare, 15 por por e jothesto
                 try:
                     await context.bot.edit_message_text(
                         f"🔄 **Processing...**\n👤 User: {user_name}\n🗂 Key: `{kw}`\n📥 Leads Found: {new_count}\n♻️ Duplicates Skipped: {duplicate_count}\n⏳ Progress: {kw_idx}/{len(keywords)}",
@@ -521,6 +531,21 @@ async def execute_auto_search(context, uid, user_name):
         session_stats['status'] = "Idle"
 
 # --- Action Functions ---
+async def logincode_action(update, context):
+    uid = str(update.effective_user.id)
+    if uid not in OWNER_IDS:
+        await update.message.reply_text("No permission")
+        return
+    import random as _rnd
+    code = str(_rnd.randint(100000, 999999))
+    try:
+        db.reference(f'web_login_codes/{uid}').set({"code": code, "time": dhaka_now().isoformat()})
+    except Exception as e:
+        await update.message.reply_text(f"Code বানাতে সমস্যা: {e}")
+        return
+    _update_sync("logincode", "telegram", uid)
+    await update.message.reply_text(f"🔑 Web Login Code: {code}\n\nWeb App এ Admin ID + এই কোড দাও।\n10 মিনিটের মধ্যে ব্যবহার করো, 1 বারই চলবে।")
+
 async def health_action(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback=False):
     uid = str(update.effective_user.id)
     try:
@@ -757,6 +782,7 @@ async def cb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         session_stats['status'] = "Stopped"
         session_stats['active_by_id'] = None
+        _update_sync("stop", "telegram", uid)
         await q.message.reply_text("🛑 Process Forcefully Stopped.", reply_markup=get_back_markup())
     elif q.data == 'set_countries':
         await set_countries_action(update, context)
@@ -947,11 +973,12 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div class="loginCard">
     <div class="big">👑</div>
     <h1>GPS EMG <span style="color:#fbbf24">Premium</span></h1>
-    <p>Render থেকে সরাসরি কন্ট্রোল করো।<br>Telegram ছাড়াই, ব্রাউজার থেকেই সব হবে।</p>
+    <p>GPS EMG Premium Control</p>
     <div class="badge">✦ PREMIUM • HIGH QUALITY • SECURE</div>
-    <input id="adminInput" class="input" style="margin-top:16px;text-align:center;font-weight:800;letter-spacing:.5px" placeholder="Admin ID লিখো  (যেমন 123456789)" inputmode="numeric">
-    <button onclick="doLogin()" class="btn btnGold btnFull">🔓 ওয়েব অ্যাপ খুলো</button>
-    <p style="font-size:11px;margin-top:12px">শুধু যাদের Admin পারমিশন আছে তারাই ঢুকতে পারবে।<br>Admin ID টা বটের Owner ID এর সাথে মিলিয়ে দেখা হবে।</p>
+    <input id="adminInput" class="input" style="margin-top:16px;text-align:center;font-weight:800;letter-spacing:.5px" placeholder="Admin ID" inputmode="numeric">
+    <input id="codeInput" class="input" style="margin-top:10px;text-align:center;font-weight:800;letter-spacing:3px" placeholder="Login Code" inputmode="numeric" maxlength="6">
+    <button onclick="doLogin()" class="btn btnGold btnFull">🔓 Login</button>
+    <p style="font-size:11px;margin-top:12px">Bot এ <b>/logincode</b> লিখে কোড নাও</p>
     <div id="loginErr" style="display:none;color:#fca5a5;font-size:12px;margin-top:10px;font-weight:700"></div>
   </div>
 </div>
@@ -1020,12 +1047,14 @@ function showToast(t){let e=document.getElementById('toast');e.innerText=t;e.sty
 function headers(){return {'Content-Type':'application/json','X-Admin-ID':ADMIN}}
 async function doLogin(){
   let v=document.getElementById('adminInput').value.trim();
+  let c=document.getElementById('codeInput').value.trim();
   if(!v){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='Admin ID লিখো';return}
+  if(!c){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='Login Code লিখো - Bot এ /logincode দাও';return}
   try{
-    let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({admin_id:v})});
+    let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({admin_id:v,code:c})});
     let j=await r.json();
     if(j.ok){ADMIN=v;localStorage.setItem('gps_admin',v);document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';document.getElementById('adminShow').innerText='Admin • '+v;refreshAll();showToast('✅ Welcome, Admin!')}
-    else{document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='❌ এই ID এর পারমিশন নাই';}
+    else{document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='❌ '+ (j.message||'Login hoy nai');}
   }catch(e){document.getElementById('loginErr').style.display='block';document.getElementById('loginErr').innerText='নেট সমস্যা, আবার চেষ্টা করো';}
 }
 function togglePanel(which){
@@ -1045,10 +1074,18 @@ function togglePanel(which){
     if(willOpen) loadKeywords();
   }
 }
-async function refreshAll(){await Promise.all([loadStatus(),loadKeywords(),loadLeads(0)])}
+async function refreshAll(){
+  showToast('♻️ রিফ্রেশ হচ্ছে...');
+  OFFSET=0;
+  try{document.getElementById('leadSearch').value='';}catch(e){}
+  try{document.getElementById('leadList').innerHTML='<div class="empty">লোড হচ্ছে...</div>';}catch(e){}
+  try{document.getElementById('kwList').innerHTML='<div class="empty">লোড হচ্ছে...</div>';}catch(e){}
+  await Promise.all([loadStatus(),loadKeywords(),loadLeads(0)]);
+  showToast('✅ রিফ্রেশ হইছে');
+}
 async function loadStatus(){
   try{let r=await fetch('/api/status',{headers:headers()});let j=await r.json();
-  if(j.ok){document.getElementById('c1').innerText=j.db1;document.getElementById('c2').innerText=j.db2;document.getElementById('cQ').innerText=j.queue;document.getElementById('cS').innerText=j.session_status;document.getElementById('cS2').innerText='সেশনে পাওয়া: '+j.session_leads+' টা লিড';document.getElementById('botStatus').innerText=j.session_status;document.getElementById('topStatus').innerText=j.session_status==='Idle'?'Online':j.session_status;document.getElementById('statusLine').innerHTML='⚙️ <b>'+j.session_status+'</b> • DB1: <b>'+j.db1+'</b> • DB2: <b>'+j.db2+'</b> • Queue: <b>'+j.queue+'</b><br>👤 Run by: '+(j.active_by||'কেউ না')+' • ⏱ '+j.uptime;}}
+  if(j.ok){document.getElementById('c1').innerText=j.db1;document.getElementById('c2').innerText=j.db2;document.getElementById('cQ').innerText=j.queue;document.getElementById('cS').innerText=j.session_status;document.getElementById('cS2').innerText='সেশনে পাওয়া: '+j.session_leads+' টা লিড';document.getElementById('botStatus').innerText=j.session_status;document.getElementById('topStatus').innerText=j.session_status==='Idle'?'Online':j.session_status;let _la=j.last_action||{};let _laTxt=_la.action?(' • 🔄 শেষ কাজ: '+( _la.source==='web'?'Web':'Bot')+' থেকে '+_la.action):'';document.getElementById('statusLine').innerHTML='⚙️ <b>'+j.session_status+'</b> • DB1: <b>'+j.db1+'</b> • DB2: <b>'+j.db2+'</b> • Queue: <b>'+j.queue+'</b><br>👤 Run by: '+(j.active_by||'কেউ না')+' • ⏱ '+j.uptime+_laTxt;}}
   catch(e){}
 }
 async function loadKeywords(){
@@ -1062,11 +1099,17 @@ async function loadLeads(reset){
   if(reset===0)OFFSET=0;
   let q=document.getElementById('leadSearch').value.trim();
   try{let r=await fetch('/api/leads?offset='+OFFSET+'&limit='+LIMIT+'&q='+encodeURIComponent(q),{headers:headers()});let j=await r.json();
-  if(j.ok){document.getElementById('leadCount').innerText=j.total+' টা';document.getElementById('leadCountBtn').innerText=j.total;let h=j.leads.map(l=>'<div class="lead"><div class="leadTop"><img src="'+(l.icon||'')+'" onerror="this.src=\'\'"><div><h4>'+(l.app_name||'App')+'</h4><p>📥 '+(l.installs||'')+' • ⭐ '+(l.score||'')+' • 🔑 '+(l.keyword||'')+'<br>📱 '+(l.app_id||'')+'</p></div></div><div class="leadEmail">📧 '+(l.email||'No email')+'</div><div class="leadActions"><button class="mini copy" onclick="copyText(\''+(l.email||'').replace(/'/g,'')+'\')">📋 Copy</button><button class="mini" onclick="copyText(\''+(l.app_name||'')+' | '+(l.email||'')+'\')">Copy All</button><button class="mini del" onclick="delLead(\''+l.key+'\')">🗑️ Delete</button></div></div>').join('');if(OFFSET===0)document.getElementById('leadList').innerHTML=h||'<div class="empty">কোনো লিড পাওয়া যায় নাই।</div>';else document.getElementById('leadList').innerHTML+=h;}}
+  if(j.ok){j.leads.forEach(_l=>{_leadsMap[_l.key]=_l;});document.getElementById('leadCount').innerText=j.total+' টা';document.getElementById('leadCountBtn').innerText=j.total;let h=j.leads.map(l=>'<div class="lead"><div class="leadTop"><img src="'+(l.icon||'')+'" onerror="this.src=\'\'"><div><h4>'+(l.app_name||'App')+'</h4><p>📥 '+(l.installs||'')+' • ⭐ '+(l.score||'')+' • 🔑 '+(l.keyword||'')+'<br>📱 '+(l.app_id||'')+'</p></div></div><div class="leadEmail">📧 '+(l.email||'No email')+'</div><div class="leadActions"><button class="mini copy" onclick="copyText(\''+(l.email||'').replace(/'/g,'')+'\')">📋 Copy</button><button class="mini" onclick="copyAllLead(\''+l.key+'\')">📋 All Copy</button><button class="mini del" onclick="delLead(\''+l.key+'\')">🗑️ Delete</button></div></div>').join('');if(OFFSET===0)document.getElementById('leadList').innerHTML=h||'<div class="empty">কোনো লিড পাওয়া যায় নাই।</div>';else document.getElementById('leadList').innerHTML+=h;}}
   catch(e){}
 }
 function loadMore(){OFFSET+=LIMIT;loadLeads(1)}
+let _leadsMap={};
 function copyText(t){if(!t)return;navigator.clipboard.writeText(t).then(()=>showToast('📋 কপি হইছে'))}
+function copyAllLead(key){
+  let l=_leadsMap[key]; if(!l) return showToast('লিড পাওয়া যায় নাই');
+  let txt='App Name: '+(l.app_name||'')+'\nApp ID: '+(l.app_id||'')+'\nEmail: '+(l.email||'')+'\nPhone: '+(l.phone||'')+'\nWebsite: '+(l.website||'')+'\nInstalls: '+(l.installs||'')+'\nCountry: '+(l.country||'')+'\nKeyword: '+(l.keyword||'')+'\nDate: '+(l.date||'')+'\nScore: '+(l.score||'')+'\nTotal Ratings: '+(l.total_ratings||0)+'\n1-Star: '+(l.ratings_1||0)+'\n2-Star: '+(l.ratings_2||0)+'\n3-Star: '+(l.ratings_3||0)+'\n4-Star: '+(l.ratings_4||0)+'\n5-Star: '+(l.ratings_5||0)+'\nIcon: '+(l.icon||'');
+  navigator.clipboard.writeText(txt).then(()=>showToast('📋 সব তথ্য কপি হইছে'));
+}
 async function delLead(key){if(!confirm('এই লিডটা ডিলিট করবো?'))return;let r=await fetch('/api/leads?key='+encodeURIComponent(key),{method:'DELETE',headers:headers()});let j=await r.json();if(j.ok){showToast('🗑️ লিড ডিলিট হইছে');loadLeads(0);loadStatus();}}
 async function sendCmd(action){
   let kw=document.getElementById('manualKw').value.trim();
@@ -1182,9 +1225,27 @@ async def api_login(request):
     except:
         body = {}
     aid = str(body.get('admin_id','')).strip()
-    if _web_is_admin(aid):
-        return web.json_response({"ok": True, "message": "Welcome Admin"})
-    return web.json_response({"ok": False, "message": "No permission"})
+    code = str(body.get('code','') or body.get('login_code','')).strip()
+    if not _web_is_admin(aid):
+        return web.json_response({"ok": False, "message": "No permission"})
+    if not code:
+        return web.json_response({"ok": False, "message": "Login Code lagbe - Bot e /logincode dao"})
+    try:
+        stored = db.reference(f'web_login_codes/{aid}').get()
+    except:
+        stored = None
+    if not isinstance(stored, dict) or str(stored.get('code','')) != code:
+        return web.json_response({"ok": False, "message": "Code vul - Bot theke notun code nao"})
+    try:
+        import datetime as _dt
+        exp = _dt.datetime.fromisoformat(str(stored.get('time','')))
+        if (dhaka_now() - exp).total_seconds() > 600:
+            return web.json_response({"ok": False, "message": "Code expired - Bot theke notun code nao"})
+    except:
+        pass
+    try: db.reference(f'web_login_codes/{aid}').delete()
+    except: pass
+    return web.json_response({"ok": True, "message": "Welcome Admin"})
 
 async def api_status(request):
     aid = _web_get_admin_id(request)
@@ -1197,6 +1258,11 @@ async def api_status(request):
     if session_stats.get('start_time'):
         delta = dhaka_now() - session_stats['start_time']
         uptime = f"{delta.seconds//60}m {delta.seconds%60}s"
+    last_action = {}
+    try:
+        _la = db.reference('sync/last_action').get()
+        if isinstance(_la, dict): last_action = _la
+    except: pass
     return web.json_response({
         "ok": True,
         "db1": db1,
@@ -1206,7 +1272,8 @@ async def api_status(request):
         "session_status": session_stats.get('status','Idle'),
         "active_by": session_stats.get('active_by_name') or '',
         "uptime": uptime,
-        "logs": web_logs[-3:] if web_logs else []
+        "logs": web_logs[-3:] if web_logs else [],
+        "last_action": last_action
     })
 
 async def api_leads(request):
@@ -1231,7 +1298,7 @@ async def api_leads(request):
             hay = f"{v.get('app_name','')} {v.get('email','')} {v.get('keyword','')} {v.get('app_id','')}".lower()
             if q not in hay:
                 continue
-        items.append({"key": key, "app_name": v.get('app_name',''), "app_id": v.get('app_id',''), "icon": v.get('icon',''), "email": v.get('email',''), "phone": v.get('phone',''), "website": v.get('website',''), "installs": v.get('installs',''), "country": v.get('country',''), "keyword": v.get('keyword',''), "date": v.get('date',''), "score": v.get('score',0)})
+        items.append({"key": key, "app_name": v.get('app_name',''), "app_id": v.get('app_id',''), "icon": v.get('icon',''), "email": v.get('email',''), "phone": v.get('phone',''), "website": v.get('website',''), "installs": v.get('installs',''), "country": v.get('country',''), "keyword": v.get('keyword',''), "date": v.get('date',''), "score": v.get('score',0), "total_ratings": v.get('total_ratings',0), "ratings_1": v.get('ratings_1',0), "ratings_2": v.get('ratings_2',0), "ratings_3": v.get('ratings_3',0), "ratings_4": v.get('ratings_4',0), "ratings_5": v.get('ratings_5',0)})
     # Newest first by date string
     try:
         items.sort(key=lambda x: x.get('date',''), reverse=True)
@@ -1324,6 +1391,7 @@ async def api_command(request):
         session_stats['status'] = "Stopped"
         session_stats['active_by_id'] = None
         session_stats['active_by_name'] = None
+        _update_sync("stop", "web", aid)
         web_command_history.append({"action": "stop", "time": dhaka_now().isoformat()})
         return web.json_response({"ok": True, "message": "🛑 Stopped"})
     if action == 'auto':
@@ -1341,6 +1409,7 @@ async def api_command(request):
         # execute_auto_search_web ke niche define kora ache, loop e task hisebe chalano
         task = asyncio.create_task(_run_auto())
         active_tasks[f"web_{aid}"] = task
+        _update_sync("auto", "web", aid)
         return web.json_response({"ok": True, "message": "🤖 Auto Mode Started from Web App"})
     if action == 'manual':
         if not keyword:
@@ -1352,6 +1421,7 @@ async def api_command(request):
         web_contexts[aid] = ctx
         task = asyncio.create_task(scrape_task(keyword, ctx, aid, "Web Admin", is_auto=False))
         active_tasks[f"web_{aid}"] = task
+        _update_sync("manual: "+keyword, "web", aid)
         return web.json_response({"ok": True, "message": f"🔍 Searching: {keyword}"})
     return web.json_response({"ok": False, "message": "Unknown command"})
 
@@ -1441,10 +1511,13 @@ def main():
     if not TOKEN:
         sys.exit("Missing TOKEN")
     app = Application.builder().token(TOKEN).build()
+    globals()['TELEGRAM_APP'] = app
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(setup_persistent_menu(app))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("logincode", logincode_action))
+    app.add_handler(CommandHandler("login", logincode_action))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("health", health_command))
     app.add_handler(CommandHandler("download", download_command))
@@ -1489,7 +1562,7 @@ def main():
             asyncio.create_task(poll_web_commands_loop())
             runner = web.AppRunner(web_app)
             await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT)
+            site = web.TCPSite(runner, "0.0.0.0", PORT, access_log=None)  # aiohttp er UTC access log bondho, sudhu Dhaka log thakbe
             await site.start()
             logger.info(f"✅ Webhook set to {RENDER_URL}/{TOKEN}")
             logger.info(f"✅ Premium Web App at {RENDER_URL}/")
@@ -1505,7 +1578,7 @@ def main():
             asyncio.create_task(poll_web_commands_loop())
             runner = web.AppRunner(web_app)
             await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT)
+            site = web.TCPSite(runner, "0.0.0.0", PORT, access_log=None)  # aiohttp er UTC access log bondho, sudhu Dhaka log thakbe
             await site.start()
             logger.info(f"✅ Premium Web App at http://localhost:{PORT}/")
             await app.updater.start_polling()
